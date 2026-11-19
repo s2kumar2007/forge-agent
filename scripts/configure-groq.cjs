@@ -37,7 +37,7 @@ async function configureGroq({apiKey,baseUrl='http://localhost:8790',agents,fetc
   const payload=current?{description:agent.description,manifest:agent.manifest}:agent;
   await request(baseUrl+'/api/v1/agents'+(current?'/'+current.id:''),{method:current?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
  }
- return 'Groq generation verified. Primary/inline remain Gemini; fallback is groq/gpt-oss-120b. Reload the extension.';
+ return 'Groq generation verified. Primary, inline and fallback use groq/gpt-oss-120b. Reload the extension.';
 }
 module.exports={configureGroq};
 if(require.main===module)(async()=>{

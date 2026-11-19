@@ -25,7 +25,7 @@ VS Code client for TrueForge's agent loop, with local MCP editor tools and revie
 4. **Launch extension**: Open this repository in VS Code and press **F5** (Run Extension).
 
 > [!NOTE]
-> The Google Gemini free-tier daily quota is very limited (20 requests/day) and may be exhausted quickly on your account, which can trigger automatic fallback to Groq (`openai/gpt-oss-120b`) on the first request. Keep the Groq compatibility adapter running beside TrueForge.
+> Forge is configured for Groq only. Keep the Groq compatibility adapter running beside TrueForge.
 
 ## Clean-clone setup
 
@@ -48,26 +48,24 @@ Requires Node 22.14+ (validated with Node 24), VS Code 1.90+, git, and Python fo
    macOS/Linux: `OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1"]' npx @truefoundry/trueforge@0.182.0`. This explicit host allowlist is required for the loopback editor MCP URL.
 
    UI: http://localhost:8790. Local API docs: http://localhost:8790/api/v1/docs, schema: /api/v1/openapi.json. Tested pair: TrueForge server 0.182.0 with `@truefoundry/trueforge-sdk` 0.182.0. Users should start TrueForge with a pinned version if possible: `npx @truefoundry/trueforge@0.182.0`. This extension assumes local no-auth TrueForge; authenticated remote hosting is not configured here.
-4. Configure the primary/inline Google model aliases and the Groq fallback below in TrueForge Settings, using your own keys. The secure Groq setup helper is described below. A fresh server starts with no configured models. Never put keys in this repository or VS Code settings.
+4. Configure the Groq model below in TrueForge Settings, using your own key. The secure Groq setup helper is described below. A fresh server starts with no configured models. Never put keys in this repository or VS Code settings.
 5. Run code . in the extension repository, press F5 (Run Extension), then open your disposable Flask checkout in the development host. Alternatively:
 
     code --new-window --extensionDevelopmentPath="<absolute extension repo>" "<absolute Flask checkout>"
 
 Activation starts a loopback MCP server, registers its bearer header in TrueForge and syncs agents/*.json. If setup fails, a non-blocking warning appears; sending a request retries setup. Reload after changing agent JSON or server model configuration that was already synchronized.
 
-## Models and Groq fallback
+## Models
 
-The primary and inline agents use Google. At the user's request, the fallback manifest now uses Groq. Model names in agents/*.json must match TrueForge Settings. Google and Groq credentials are configured locally. Groq fallback completed the exact inline Task A in the native host, including independent behavior checks. Task B results are recorded separately.
+The primary, inline and fallback agents use Groq. Model names in agents/*.json must match TrueForge Settings. Groq credentials are configured locally.
 
 | Role | TrueForge agent reference | Provider model_id |
 |---|---|---|
-| Primary | google-gemini/gemini-3-5-flash | gemini-3.5-flash |
-| Inline | google-gemini/gemini-2-5-flash | gemini-2.5-flash |
+| Primary | groq/gpt-oss-120b | openai/gpt-oss-120b |
+| Inline | groq/gpt-oss-120b | openai/gpt-oss-120b |
 | Fallback | groq/gpt-oss-120b | openai/gpt-oss-120b |
 
-Both models accepted actual generation requests. The Groq fallback is configured privately and verified; real generation and Task A fallback are verified via `docs/live-A-exact-edits.json`. Task B live execution was also evaluated with Groq (`openai/gpt-oss-120b`) as recorded in `docs/live-B-verified.json`. Google free-tier quotas apply separately to model requests and blocked longer tool turns during this audit. Gemini 2.5 access can be account-restricted: verify your own account before copying these defaults.
-
-The former primary gemini-3.8-flash was listed but returned HTTP 503 during generation. The available OpenAI credential returned HTTP 401. The Groq credential was entered locally and retained only in TrueForge settings. The fallback is configured in forge-agent-fallback.json. Never put keys in this repository. config.example.json is an illustrative checklist, not an importable TrueForge manifest.
+Groq is configured privately and verified through the local setup helper. Task B live execution was evaluated with Groq (`openai/gpt-oss-120b`) as recorded in `docs/live-B-verified.json`. The credential is retained only in TrueForge settings. Never put keys in this repository. config.example.json is an illustrative checklist, not an importable TrueForge manifest.
 
 ## Secure local Groq setup
 
@@ -79,7 +77,7 @@ The prompt hides the key. It is passed through a temporary process environment v
 
 The helper verifies model access and a small generation request before changing TrueForge settings, starts the loopback compatibility adapter without inheriting GROQ_API_KEY, preserves other Groq models, then synchronizes the committed primary, inline and fallback agents. It refuses a conflicting provider named groq. Reload the extension afterward. Official API/model references: https://console.groq.com/docs/overview and https://console.groq.com/docs/models.
 
-Gemini diagnosis on 28 October: actual HTTP 429 events report both a five-request/minute free-tier cap and a 20-request/day cap; the latest Gemini 2.5 failure reports roughly 18h19m until reset. Authentication has succeeded, including the exact inline Task C fallback. Retrying cannot increase the daily allowance. See docs/live-reset-sessions.json and docs/LIVE_TESTS.md. Groq authentication now works; its own model/input-token limits still apply.
+Groq authentication and model/input-token limits apply to every agent. Keep the compatibility adapter running for the configured custom provider.
 
 ## TrueForge 0.180.1 / Groq compatibility
 
