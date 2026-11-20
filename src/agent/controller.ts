@@ -13,6 +13,11 @@ function isNetworkFailure(err: unknown): boolean {
   return /\b(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT)\b|fetch failed|failed to fetch|network(?: error| failure|error)|socket hang up|connection (?:refused|reset|timed out)|timed out/i.test(message);
 }
 
+function isServerFailure(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b(?:HTTP\s*)?5\d\d\b|\bstatus(?:\s+code)?\s*[:=]?\s*5\d\d\b/i.test(message);
+}
+
 export interface ControllerDeps {
   getClient: () => TrueForge;
   approvals: ApprovalHandler;
@@ -91,7 +96,7 @@ export class AgentController {
         sleep: this.d.sleep ?? ((ms) => sleepForRetry(ms, this.abort.signal)),
         isCancelled: () => this.cancelled,
         canRetry: () => this.approvedOperations === 0,
-        shouldFallbackImmediately: (err) => isAuthenticationFailure(err) || isNetworkFailure(err),
+        shouldFallbackImmediately: (err) => isAuthenticationFailure(err) || isNetworkFailure(err) || isServerFailure(err),
         attempt: (agent) => this.attempt(agent, request, ui, rebuildRequest, () => ++clientToolResponses),
         onRetry: (agent, n, err) => {
           this.d.logError?.(err);
