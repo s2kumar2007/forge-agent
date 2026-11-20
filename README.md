@@ -179,6 +179,19 @@ Run **Forge: Undo last applied change** to restore the most recently applied For
 
 Native VS Code `Ctrl+Z`/`Cmd+Z` remains available for normal undo behavior.
 
+## Context assembly
+
+Forge Agent automatically selects relevant workspace context before executing a turn in Agent mode:
+
+1. **Explicit mentions**: Explicit `@file:path` and `@symbol:name` mentions are granted top priority. File slices are capped at 40 lines plus top-level signatures; symbols provide a bounded window around the target symbol.
+2. **Ranked candidate shortlist**: Keywords extracted from the prompt are searched across the repository using ripgrep. Hits are scored by term matches, path matches, top-level symbol definitions matching keywords, and importing files (downstream consumers of modified modules). Dense hit windows are capped at 40 lines; symbols are capped at 25 signatures.
+3. **Repo map**: A compact file-tree overview is budgeted to at most 20% of the token allocation.
+4. **Token budgeting**: A greedy packer fills items by priority within the configured token budget (default `6000` tokens, or `1500` tokens for the Groq fallback, estimated at ~4 characters per token). Items that exceed available headroom are line-truncated if at least 80 tokens remain, or safely dropped.
+5. **Context used block in the panel**: The Agent chat panel displays a collapsible **Context used** block detailing:
+   - A budget summary line: `Context: <N> items, <used> of <budget> estimated tokens`
+   - Each selected item with its path/slice, estimated token size, and rationale (why it was chosen).
+   - Real TrueForge harness events (subagent lifecycle lines like `Subagent search started` and compaction lines like `Context compacted`) and session identity (`Session: <id>`).
+
 ## Extension settings
 
 | Setting | Default | Description |
