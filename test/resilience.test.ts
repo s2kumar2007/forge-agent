@@ -78,6 +78,26 @@ describe('controller resilience (stage 7)', () => {
     expect(ui.notices.some((notice) => notice.startsWith('Primary model failed, using fallback:'))).toBe(true);
   });
 
+  it.each(['HTTP 500 Internal Server Error', 'status code 503 Service Unavailable'])('switches to fallback immediately on %s', async (message) => {
+    const { root } = tempRepo();
+    const tf = new FakeTrueForge({
+      'forge-agent': [() => { throw new Error(message); }],
+      'forge-agent-fallback': [() => [created(), done()]],
+    });
+    const sleeps: number[] = [];
+    const ctl = new AgentController({
+      getClient: () => tf.client,
+      approvals: { decide: async () => ({ status: 'deny' as const, reason: 'denied' }), cancelAll() {} },
+      agents: () => ({ primary: 'forge-agent', fallback: 'forge-agent-fallback' }),
+      sleep: async (ms) => { sleeps.push(ms); },
+    });
+    const ui = new RecordingUi();
+    await ctl.run('hello', ui);
+    expect(ui.result?.status).toBe('done');
+    expect(sleeps).toEqual([]);
+    expect([...tf.sessions.values()]).toEqual(['forge-agent', 'forge-agent-fallback']);
+  });
+
   it('network errors on the primary -> fallback agent answers in a NEW session; non-blocking notice; workspace untouched', async () => {
     const { root, gitStatus } = tempRepo();
     const boom = () => { throw new Error('connect ECONNREFUSED 127.0.0.1:8790'); };
@@ -221,7 +241,7 @@ describe('fault matrix', () => {
 
 
 it('does not replay an approved command or claim an unchanged workspace on uncertain completion',async()=>{
-  const tf=new FakeTrueForge({p:[()=>[created(),toolMsg('m','tc','run_command',{command:'npm test'}),approvalRequired('tc','m'),done()],()=>{throw Error('drop after approval');}],f:[()=>[created(),done()]]});
+  const tf=new FakeTrueForge({p:[()=>[created(),toolMsg('m','tc','run_command',{command:'npm test'}),approvalRequired('tc','m'),done()],()=>{throw Error('HTTP 503 after approval');}],f:[()=>[created(),done()]]});
   const ctl=new AgentController({getClient:()=>tf.client,approvals:{decide:async()=>({status:'allow'}),cancelAll(){}},agents:()=>({primary:'p',fallback:'f'}),retries:2,sleep:async()=>{}});
   const ui=new RecordingUi();await ctl.run('run tests',ui);
   expect(ui.result?.status).toBe('error');expect(ui.result?.message).toContain('may have completed');
