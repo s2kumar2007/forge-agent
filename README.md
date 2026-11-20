@@ -2,7 +2,7 @@
 
 Forge Agent is a VS Code extension that turns **TrueForge agent sessions** into a reviewed, workspace-aware coding workflow. It provides local MCP editor tools, explicit diff approval, command confirmation, and undo support.
 
-**Default model configuration:** all committed Forge agent manifests use Groq `openai/gpt-oss-120b`. An opt-in setup can configure a second provider for automatic fallback.
+**Current model configuration:** Primary and Inline agents use Groq (`groq/gpt-oss-120b`), while the fallback agent uses Google Gemini (`google-gemini/gemini-3-5-flash`). The opt-in fallback setup can configure a second OpenAI-compatible provider.
 
 ## Features
 

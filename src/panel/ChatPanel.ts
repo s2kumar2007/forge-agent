@@ -63,7 +63,9 @@ export class ChatPanel {
     try {
       const buildMessage = async (budget: number): Promise<string> => {
         try {
-          const ctx = await assembleContext(text, this.deps, budget, this.sendAbort.signal);
+          const promptTokens = Math.ceil(text.length / 4);
+          const effectiveBudget = Math.max(500, Math.min(budget, 3500 - promptTokens));
+          const ctx = await assembleContext(text, this.deps, effectiveBudget, this.sendAbort.signal);
           this.post({
             type: 'context',
             items: ctx.items.map((i) => ({ label: i.label, reason: i.reason, tokens: i.tokens })),

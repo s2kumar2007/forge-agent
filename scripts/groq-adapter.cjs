@@ -16,13 +16,13 @@ function normalizeRequest(body,maxOutputTokens){
     const {reasoning_content,reasoning,...rest}=message;
     return rest;
    }
-   if(message.role==='tool'&&typeof message.content==='string'&&message.content.length>1000){
-    return {...message,content:message.content.slice(0,400)+'\n...[truncated]...\n'+message.content.slice(-300)};
+   if(message.role==='tool'&&typeof message.content==='string'&&message.content.length>800){
+    return {...message,content:message.content.slice(0,350)+'\n...[truncated]...\n'+message.content.slice(-250)};
    }
    return message;
   });
-  if(msgs.length>20){
-   let start=msgs.length-12;
+  if(msgs.length>8){
+   let start=msgs.length-6;
    while(start>2&&msgs[start]?.role!=='assistant')start--;
    msgs=[msgs[0],msgs[1],...msgs.slice(start)];
   }
@@ -134,6 +134,30 @@ async function startAdapter({port=8791,fetchImpl=fetch,sleep=wait,maxRetries=2,m
       }
      }
      res.writeHead(429,{'Content-Type':upstream.headers.get('content-type')||'application/json'});res.end(message);return;
+    }
+    if(upstream.status===413&&attempt<maxRetries){
+     const message=await upstream.text();
+     console.log(`[groq-adapter] 413 message: ${message.slice(0, 300)}`);
+     try {
+      const parsed=JSON.parse(body);
+      if(Array.isArray(parsed.messages)&&parsed.messages.length>2){
+       parsed.messages=parsed.messages.map((m,idx)=>{
+        if(idx>1&&typeof m.content==='string'&&m.content.length>250){
+         return {...m,content:m.content.slice(0,120)+'\n...[truncated]...\n'+m.content.slice(-80)};
+        }
+        return m;
+       });
+       if(parsed.messages.length>5){
+        let start=parsed.messages.length-3;
+        while(start>2&&parsed.messages[start]?.role!=='assistant')start--;
+        parsed.messages=[parsed.messages[0],parsed.messages[1],...parsed.messages.slice(start)];
+       }
+       body=JSON.stringify(parsed);
+       console.log(`[groq-adapter] pruned 413 request to ${body.length} bytes, retrying attempt ${attempt+1}...`);
+       continue;
+      }
+     } catch {}
+     res.writeHead(413,{'Content-Type':upstream.headers.get('content-type')||'application/json'});res.end(message);return;
     }
     if(upstream.status===400){
      const message=await upstream.text();

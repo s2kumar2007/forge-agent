@@ -230,14 +230,26 @@ describe('fault matrix', () => {
     expect(ui.result?.status).toBe('done');
     expect(gitStatus()).toBe('');
   });
-  it.each(['401 Unauthorized', '403 Forbidden', 'connect ECONNREFUSED', 'fetch failed', 'HTTP 503', 'status code 502', '429 rate limited', 'malformed event', 'SSE drop', 'turn error'])('recovers from %s with backoff then a fresh fallback session',async(reason)=>{
+  it('fails fast on 413 Request too large without backoff then recovers with a fresh fallback session', async () => {
+    const { root, gitStatus } = tempRepo();
+    const fail = () => { throw Error('[Model Error] Request failed (413): Request too large for model'); };
+    const tf = new FakeTrueForge({ p: [fail], f: [() => [created(), done()]] });
+    const sleeps: number[] = [];
+    const ctl = new AgentController({ getClient: () => tf.client, approvals: { decide: async () => ({ status: 'deny', reason: 'no' }), cancelAll() {} }, agents: () => ({ primary: 'p', fallback: 'f' }), sleep: async (ms) => { sleeps.push(ms); } });
+    const ui = new RecordingUi();
+    await ctl.run('test', ui);
+    expect(sleeps).toEqual([]);
+    expect(ui.result?.status).toBe('done');
+    expect(gitStatus()).toBe('');
+  });
+  it.each(['401 Unauthorized', '403 Forbidden', '413 Request too large', 'connect ECONNREFUSED', 'fetch failed', 'HTTP 503', 'status code 502', '429 rate limited', 'malformed event', 'SSE drop', 'turn error'])('recovers from %s with backoff then a fresh fallback session',async(reason)=>{
     const { root,gitStatus }=tempRepo();
     const fail=()=>{throw Error(reason+'\n at private stack');};
     const tf=new FakeTrueForge({p:[fail,fail,fail],f:[()=>[created(),done()]]});
     const sleeps:number[]=[];
     const ctl=new AgentController({getClient:()=>tf.client,approvals:{decide:async()=>({status:'deny',reason:'no'}),cancelAll(){}},agents:()=>({primary:'p',fallback:'f'}),sleep:async ms=>{sleeps.push(ms);}});
     const ui=new RecordingUi();await ctl.run('test',ui);
-    expect(sleeps).toEqual(/^(401|403)\b|ECONNREFUSED|fetch failed|5\d\d/i.test(reason)?[]:[1000,2000]);expect(ui.result?.status).toBe('done');expect(gitStatus()).toBe('');
+    expect(sleeps).toEqual(/^(401|403|413)\b|ECONNREFUSED|fetch failed|5\d\d/i.test(reason)?[]:[1000,2000]);expect(ui.result?.status).toBe('done');expect(gitStatus()).toBe('');
   });
   it('retries setup on the next request after activation was offline',async()=>{
     let setup=0;const tf=new FakeTrueForge({p:[()=>[created(),done()]]});
