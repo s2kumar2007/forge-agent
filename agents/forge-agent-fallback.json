@@ -1,6 +1,6 @@
 {
   "name": "forge-agent-fallback",
-  "description": "Forge fallback coding agent using Groq when the primary Gemini model fails.",
+  "description": "Forge fallback coding agent using Groq when the primary Groq model fails.",
   "manifest": {
     "model": {
       "name": "groq/gpt-oss-120b",

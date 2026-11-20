@@ -4,7 +4,7 @@ The user excluded demo-video recording on 29 October 2026. This script remains a
 
 ## Setup
 
-1. Follow README: npm ci, typecheck, test, build. Start TrueForge and configure the Google models and Groq fallback as documented.
+1. Follow README: npm ci, typecheck, test, build. Start TrueForge and configure Groq as documented.
 2. Clone https://github.com/pallets/flask.git and checkout tag 3.1.3. git rev-parse HEAD must report 22d924701a6ae2e4cd01e9a15bbaf3946094af65.
 3. python -m venv .venv. Activate with .venv\Scripts\Activate.ps1 in PowerShell, or source .venv/bin/activate on macOS/Linux. Install dependencies: pip install -e . "pytest<9" python-dotenv asgiref (pytest 9 breaks Flask 3.1.3 tests).
 4. Open Flask in the extension development host. Check git status --short is empty. Record start time, TrueForge session id, configured model aliases and the initial git status.
