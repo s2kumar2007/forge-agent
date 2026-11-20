@@ -153,7 +153,19 @@ describe('controller resilience (stage 7)', () => {
 
 
 describe('fault matrix', () => {
-  it.each(['401 Unauthorized', 'connect ECONNREFUSED', '429 rate limited', 'malformed event', 'SSE drop', 'turn error'])('recovers from %s with backoff then a fresh fallback session',async(reason)=>{
+  it('fails fast on 401 Unauthorized without backoff then recovers with a fresh fallback session', async () => {
+    const { root, gitStatus } = tempRepo();
+    const fail = () => { throw Error('401 Unauthorized\n at private stack'); };
+    const tf = new FakeTrueForge({ p: [fail], f: [() => [created(), done()]] });
+    const sleeps: number[] = [];
+    const ctl = new AgentController({ getClient: () => tf.client, approvals: { decide: async () => ({ status: 'deny', reason: 'no' }), cancelAll() {} }, agents: () => ({ primary: 'p', fallback: 'f' }), sleep: async (ms) => { sleeps.push(ms); } });
+    const ui = new RecordingUi();
+    await ctl.run('test', ui);
+    expect(sleeps).toEqual([]);
+    expect(ui.result?.status).toBe('done');
+    expect(gitStatus()).toBe('');
+  });
+  it.each(['connect ECONNREFUSED', '429 rate limited', 'malformed event', 'SSE drop', 'turn error'])('recovers from %s with backoff then a fresh fallback session',async(reason)=>{
     const { root,gitStatus }=tempRepo();
     const fail=()=>{throw Error(reason+'\n at private stack');};
     const tf=new FakeTrueForge({p:[fail,fail,fail],f:[()=>[created(),done()]]});
@@ -185,12 +197,12 @@ it('does not replay an approved command or claim an unchanged workspace on uncer
 
 it('honors a quota retry hint before replaying an unapproved request', async () => {
  let elapsed=0, attempts=0;
- const {o}=opts(async()=>{attempts++;if(elapsed<39000)throw new Error('Request failed (429): Please retry in 38.976679664s.');return 'ok';},{sleep:async(ms:number)=>{elapsed+=ms;}});
- expect(await runWithFallback(o)).toBe('ok');expect(attempts).toBe(2);expect(elapsed).toBeGreaterThanOrEqual(39000);expect(elapsed).toBeLessThanOrEqual(60000);
+ const {o}=opts(async()=>{attempts++;if(elapsed<8000)throw new Error('Request failed (429): Please retry in 8s.');return 'ok';},{sleep:async(ms:number)=>{elapsed+=ms;}});
+ expect(await runWithFallback(o)).toBe('ok');expect(attempts).toBe(2);expect(elapsed).toBe(8250);
 });
 it('caps excessive quota hints and preserves backoff for other failures',async()=>{
  let n=0;const quota=opts(async()=>{if(++n===1)throw new Error('429 Please retry in 3600s.');return 'ok';});
- expect(await runWithFallback(quota.o)).toBe('ok');expect(quota.sleeps).toEqual([60000]);
+ expect(await runWithFallback(quota.o)).toBe('ok');expect(quota.sleeps).toEqual([12000]);
  let m=0;const ordinary=opts(async()=>{if(++m<3)throw new Error('503 Please retry in 60s.');return 'ok';});
  expect(await runWithFallback(ordinary.o)).toBe('ok');expect(ordinary.sleeps).toEqual([1000,2000]);
 });
@@ -205,6 +217,31 @@ it('Stop interrupts provider-directed backoff before another session starts',asy
 },2000);
 
 it('honors Groq try-again quota wording before retrying',async()=>{
- let n=0;const retry=opts(async()=>{if(++n===1)throw new Error('429 Please try again in 23.5s.');return 'ok';});
- expect(await runWithFallback(retry.o)).toBe('ok');expect(retry.sleeps).toEqual([23750]);
+ let n=0;const retry=opts(async()=>{if(++n===1)throw new Error('429 Please try again in 5.5s.');return 'ok';});
+ expect(await runWithFallback(retry.o)).toBe('ok');expect(retry.sleeps).toEqual([5750]);
+});
+
+it('avoids double-retry stacking when primary already retried', async () => {
+  const calls: string[] = [];
+  const { o, sleeps } = opts(async (a) => {
+    calls.push(a);
+    throw new Error('500 Server Error');
+  });
+  await expect(runWithFallback(o)).rejects.toBeInstanceOf(ForgeFailure);
+  expect(calls).toEqual(['p', 'p', 'p', 'f']);
+  expect(sleeps).toEqual([1000, 2000]);
+});
+
+it('allows fallback retries when primary failed fast on permanent error', async () => {
+  const calls: string[] = [];
+  let fCount = 0;
+  const { o, sleeps } = opts(async (a) => {
+    calls.push(a);
+    if (a === 'p') throw new Error('401 Unauthorized');
+    if (++fCount < 2) throw new Error('503 Service Unavailable');
+    return 'ok';
+  });
+  expect(await runWithFallback(o)).toBe('ok');
+  expect(calls).toEqual(['p', 'f', 'f']);
+  expect(sleeps).toEqual([1000]);
 });

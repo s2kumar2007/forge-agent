@@ -48,12 +48,13 @@ function normalizeRequest(body,maxOutputTokens){
  return result;
 }
 function quotaWait(text,header,now=Date.now()){
- if(header){const n=Number(header);if(Number.isFinite(n))return Math.max(0,Math.min(60000,Math.ceil(n*1000)+250));const date=Date.parse(header);if(Number.isFinite(date))return Math.max(0,Math.min(60000,date-now+250));}
+ const MAX_WAIT_MS = 12000;
+ if(header){const n=Number(header);if(Number.isFinite(n))return Math.max(0,Math.min(MAX_WAIT_MS,Math.ceil(n*1000)+250));const date=Date.parse(header);if(Number.isFinite(date))return Math.max(0,Math.min(MAX_WAIT_MS,date-now+250));}
  const match=/(?:retry|try\s+again)\s+in\s+(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?/i.exec(text);
  if(match&&(match[1]||match[2])){
   const mins=match[1]?parseFloat(match[1]):0;
   const secs=match[2]?parseFloat(match[2]):0;
-  return Math.min(60000,Math.ceil((mins*60+secs)*1000)+250);
+  return Math.min(MAX_WAIT_MS,Math.ceil((mins*60+secs)*1000)+250);
  }
  return 2000;
 }
@@ -96,7 +97,7 @@ function regenerateBody(body){
      payload.messages=[...(payload.messages||[]),{role:'system',content:'The preceding tool generation was rejected before delivery. Continue the original user task. Generate valid JSON matching the exposed tool schema. For call_tool, include mcp_server, tool_name and input; editor parameters belong inside input.'}];
      return JSON.stringify(payload);
 }
-async function startAdapter({port=8791,fetchImpl=fetch,sleep=wait,maxRetries=4,maxOutputTokens,onError=()=>{}}={}){
+async function startAdapter({port=8791,fetchImpl=fetch,sleep=wait,maxRetries=2,maxOutputTokens,onError=()=>{}}={}){
  if(maxOutputTokens!==undefined&&(!Number.isInteger(maxOutputTokens)||maxOutputTokens<1||maxOutputTokens>65536))throw Error('Output cap must be an integer in 1..65536');
  const server=http.createServer(async(req,res)=>{
   const url=new URL(req.url,'http://127.0.0.1');
@@ -114,6 +115,8 @@ async function startAdapter({port=8791,fetchImpl=fetch,sleep=wait,maxRetries=4,m
     for await(const chunk of req){size+=chunk.length;if(size>4*1024*1024){res.writeHead(413);res.end();return;}chunks.push(chunk);}
     try{body=JSON.stringify(normalizeRequest(JSON.parse(Buffer.concat(chunks).toString('utf8')),maxOutputTokens));}catch{res.writeHead(400);res.end('Invalid JSON');return;}
    }
+   let totalRetryWait = 0;
+   const MAX_TOTAL_RETRY_MS = 12000;
    for(let attempt=0;;attempt++){
     console.log(`[groq-adapter] attempt ${attempt} sending request (${body?.length} bytes)...`);
     const upstream=await fetchImpl(UPSTREAM+url.pathname.slice(3),{method:req.method,headers:{Authorization:req.headers.authorization,'Content-Type':'application/json'},body,signal:abort.signal});
@@ -124,8 +127,11 @@ async function startAdapter({port=8791,fetchImpl=fetch,sleep=wait,maxRetries=4,m
      const limits=/Limit\s+(\d+)[\s\S]*?Requested\s+(\d+)/i.exec(message);
      if(!limits||Number(limits[2])<=Number(limits[1])){
       const w = quotaWait(message,upstream.headers.get('retry-after'));
-      console.log(`[groq-adapter] quotaWait sleeping ${w}ms`);
-      await sleep(w,abort.signal);continue;
+      if(totalRetryWait + w <= MAX_TOTAL_RETRY_MS + 250){
+       totalRetryWait += w;
+       console.log(`[groq-adapter] quotaWait sleeping ${w}ms`);
+       await sleep(w,abort.signal);continue;
+      }
      }
      res.writeHead(429,{'Content-Type':upstream.headers.get('content-type')||'application/json'});res.end(message);return;
     }
@@ -154,4 +160,4 @@ async function startAdapter({port=8791,fetchImpl=fetch,sleep=wait,maxRetries=4,m
  return {server,url:'http://127.0.0.1:'+server.address().port+'/v1',close:()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections();})};
 }
 module.exports={normalizeRequest,quotaWait,startAdapter};
-if(require.main===module)startAdapter({maxOutputTokens:process.env.FORGE_GROQ_MAX_OUTPUT_TOKENS?Number(process.env.FORGE_GROQ_MAX_OUTPUT_TOKENS):undefined,maxRetries:process.env.FORGE_GROQ_MAX_RETRIES?Number(process.env.FORGE_GROQ_MAX_RETRIES):30}).then(a=>console.log('Groq compatibility adapter: '+a.url)).catch(e=>{console.error('Groq adapter could not start: '+e.code);process.exitCode=1;});
+if(require.main===module)startAdapter({maxOutputTokens:process.env.FORGE_GROQ_MAX_OUTPUT_TOKENS?Number(process.env.FORGE_GROQ_MAX_OUTPUT_TOKENS):undefined,maxRetries:process.env.FORGE_GROQ_MAX_RETRIES?Number(process.env.FORGE_GROQ_MAX_RETRIES):3}).then(a=>console.log('Groq compatibility adapter: '+a.url)).catch(e=>{console.error('Groq adapter could not start: '+e.code);process.exitCode=1;});

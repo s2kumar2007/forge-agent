@@ -9,9 +9,9 @@ it('removes only incompatible reasoning fields and preserves tool call structure
  expect(normalizeRequest({model:'other',messages:[{role:'tool',content:'result'}]})).toEqual({model:'other',messages:[{role:'tool',content:'result'}]});
 });
 it('reads Groq retry hints and Retry-After with bounded waits',()=>{
- expect(quotaWait('Please try again in 23.5s.',null)).toBe(23750);
+ expect(quotaWait('Please try again in 23.5s.',null)).toBe(12000);
  expect(quotaWait('Please retry in 1.2s.',null)).toBe(1450);
- expect(quotaWait('', '2')).toBe(2250);expect(quotaWait('retry in 3600s',null)).toBe(60000);
+ expect(quotaWait('', '2')).toBe(2250);expect(quotaWait('retry in 3600s',null)).toBe(12000);
 });
 it('forwards exact SSE bytes and credentials only to the fixed Groq endpoint',async()=>{
  const seen:any[]=[];const body='data: {"choices":[]}\n\ndata: [DONE]\n\n';
