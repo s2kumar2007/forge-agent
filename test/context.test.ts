@@ -4,6 +4,7 @@ import { assembleContext, windows, type ContextDeps } from '../src/context/assem
 import { extractKeywords, parseMentions } from '../src/context/keywords';
 import { topLevelSymbols } from '../src/context/symbols';
 import { runRg } from '../src/workspace/ripgrep';
+import { rgPath } from '@vscode/ripgrep';
 
 describe('packContext (token budget)', () => {
   const item = (label: string, chars: number, priority: number) => ({ label, reason: 'r', text: ('x'.repeat(39) + '\n').repeat(chars / 40), priority });
@@ -93,7 +94,7 @@ describe('ripgrep combined scans & cancellation', () => {
 
   it('kills ripgrep child process when aborted mid-flight', async () => {
     const ac = new AbortController();
-    const p = runRg('node', process.cwd(), ['-e', 'setTimeout(() => {}, 10000)'], 15000, ac.signal);
+    const p = runRg(rgPath, process.cwd(), ['--json', '-i', '-F', '-e', 'cancellation-sentinel', '/'], 15000, ac.signal);
     setTimeout(() => ac.abort(), 20);
     await expect(p).rejects.toThrow('Operation aborted');
   });
