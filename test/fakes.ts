@@ -48,6 +48,11 @@ export const toolMsg = (msgId: string, callId: string, name: string, args: objec
 });
 export const approvalRequired = (callId: string, srcId: string) => ({ type: 'tool.approval_required', id: id(), threadId: 'main', createdAt: 'x', toolCalls: [{ id: callId, sourceEventId: srcId }] });
 export const toolResponseRequired = (callId: string, threadId = 'main') => ({ type: 'tool.response_required', id: id(), threadId, createdAt: 'x', toolCalls: [{ id: callId }] });
+export const subagentCreated = (title = 'search', threadId = 'sub-1') => ({ type: 'thread.created', id: id(), threadId, title, createdAt: 'x' });
+export const subagentDone = (title = 'search', threadId = 'sub-1') => ({ type: 'thread.done', id: id(), threadId, title, createdAt: 'x', state: { status: 'done' } });
+export const compactionStarted = () => ({ type: 'thread.context_compaction_started', id: id(), threadId: 'main', createdAt: 'x' });
+export const compactionFinished = () => ({ type: 'thread.context_compaction_finished', id: id(), threadId: 'main', createdAt: 'x', durationMs: 120 });
+export const unknownEvent = (type = 'unknown.event_type') => ({ type, id: id(), threadId: 'main', createdAt: 'x' });
 
 export class RecordingUi implements AgentUi {
   text = ''; notices: string[] = []; tools: string[] = []; result?: FinishInfo;
