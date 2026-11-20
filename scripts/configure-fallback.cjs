@@ -1,0 +1,65 @@
+/** Local opt-in setup for a second OpenAI-compatible provider. */
+async function configureFallback({
+  baseUrl = 'http://localhost:8790',
+  providerBaseUrl,
+  apiKey,
+  model,
+  fetchImpl = fetch,
+}) {
+  if (!providerBaseUrl?.trim()) throw new Error('FALLBACK_BASE_URL is required.');
+  if (!model?.trim()) throw new Error('FALLBACK_MODEL is required.');
+
+  const local = new URL(baseUrl);
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(local.hostname) || !['http:', 'https:'].includes(local.protocol)) {
+    throw new Error('This helper sends credentials only to a loopback TrueForge server.');
+  }
+
+  const endpoint = new URL(providerBaseUrl);
+  if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+    throw new Error('FALLBACK_BASE_URL must be an HTTP(S) URL without embedded credentials or query parameters.');
+  }
+  const normalizedBaseUrl = endpoint.toString().replace(/\/+$/, '');
+  const providerName = 'forge-fallback';
+  const modelName = model.trim();
+  const key = apiKey?.trim() || undefined;
+  const request = async (url, options = {}) => {
+    const response = await fetchImpl(url, { ...options, signal: AbortSignal.timeout(20000) });
+    if (!response.ok) throw new Error(`TrueForge request failed (HTTP ${response.status}).`);
+    return response.status === 204 ? {} : response.json();
+  };
+
+  const providers = await request(baseUrl + '/api/v1/settings/model-providers');
+  const existing = providers.data.find((provider) => provider.name === providerName);
+  if (existing && (existing.manifest.type !== 'custom' || existing.manifest.base_url !== normalizedBaseUrl)) {
+    throw new Error('A different provider named forge-fallback already exists. It was not overwritten.');
+  }
+  const manifest = {
+    type: 'custom',
+    name: providerName,
+    base_url: normalizedBaseUrl,
+    ...(key ? { auth: { api_key: key } } : {}),
+    models: [
+      ...(existing?.manifest.models || []).filter((item) => item.name !== modelName),
+      { name: modelName, model_id: modelName, properties: {} },
+    ],
+  };
+  await request(baseUrl + '/api/v1/settings/model-providers', {
+    method: existing ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ manifest }),
+  });
+  return `Registered provider ${providerName} for model ${modelName}.`;
+}
+
+module.exports = { configureFallback };
+if (require.main === module) {
+  configureFallback({
+    baseUrl: process.argv[2] || 'http://localhost:8790',
+    providerBaseUrl: process.env.FALLBACK_BASE_URL,
+    apiKey: process.env.FALLBACK_API_KEY,
+    model: process.env.FALLBACK_MODEL,
+  }).then(console.log).catch((error) => {
+    console.error(error instanceof Error ? error.message.split(/[\r\n]/)[0] : 'Fallback provider setup failed.');
+    process.exitCode = 1;
+  });
+}
