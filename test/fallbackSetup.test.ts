@@ -34,6 +34,24 @@ it('registers an unauthenticated OpenAI-compatible provider without adding auth'
   expect(result).not.toContain('key');
 });
 
+it('selects the second provider only for the remote fallback agent', async () => {
+  const calls: { url: string; method?: string; body?: string }[] = [];
+  const fetchImpl = vi.fn(async (url: string, options: { method?: string; body?: string } = {}) => {
+    calls.push({ url, ...options });
+    return options.method ? ok({}) : ok({ data: [] });
+  });
+  await configureFallback({
+    providerBaseUrl: 'https://provider.test/v1',
+    model: 'model-x',
+    fetchImpl,
+  });
+  const agentWrite = calls.find((call) => call.url.endsWith('/agents') && call.method === 'POST');
+  expect(JSON.parse(agentWrite!.body!)).toMatchObject({
+    name: 'forge-agent-fallback',
+    manifest: { model: { name: 'forge-fallback/model-x' } },
+  });
+});
+
 it('stores an optional API key only in the TrueForge provider request', async () => {
   const calls: { url: string; method?: string; body?: string }[] = [];
   const fetchImpl = vi.fn(async (url: string, options: { method?: string; body?: string } = {}) => {

@@ -1,4 +1,7 @@
 /** Local opt-in setup for a second OpenAI-compatible provider. */
+const fs = require('node:fs/promises');
+const path = require('node:path');
+
 async function configureFallback({
   baseUrl = 'http://localhost:8790',
   providerBaseUrl,
@@ -47,6 +50,19 @@ async function configureFallback({
     method: existing ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ manifest }),
+  });
+
+  const fallbackAgent = JSON.parse(await fs.readFile(path.join(__dirname, '..', 'agents', 'forge-agent-fallback.json'), 'utf8'));
+  fallbackAgent.manifest.model.name = `${providerName}/${modelName}`;
+  const registered = await request(baseUrl + '/api/v1/agents?limit=100');
+  const current = registered.data.find((agent) => agent.name === fallbackAgent.name);
+  const payload = current
+    ? { description: fallbackAgent.description, manifest: fallbackAgent.manifest }
+    : fallbackAgent;
+  await request(baseUrl + '/api/v1/agents' + (current ? `/${current.id}` : ''), {
+    method: current ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
   });
   return `Registered provider ${providerName} for model ${modelName}.`;
 }
