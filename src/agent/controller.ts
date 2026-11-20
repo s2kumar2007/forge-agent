@@ -3,6 +3,11 @@ import { describeToolCall, runTurn, toolName } from '../forge/turnRunner';
 import type { AgentUi, ApprovalHandler } from './types';
 import { CancelledError, ForgeFailure, runWithFallback } from './resilience';
 
+function isAuthenticationFailure(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b(?:HTTP\s*)?(?:401|403)\b|\bstatus(?:\s+code)?\s*[:=]?\s*(?:401|403)\b/i.test(message);
+}
+
 export interface ControllerDeps {
   getClient: () => TrueForge;
   approvals: ApprovalHandler;
@@ -81,6 +86,7 @@ export class AgentController {
         sleep: this.d.sleep ?? ((ms) => sleepForRetry(ms, this.abort.signal)),
         isCancelled: () => this.cancelled,
         canRetry: () => this.approvedOperations === 0,
+        shouldFallbackImmediately: isAuthenticationFailure,
         attempt: (agent) => this.attempt(agent, request, ui, rebuildRequest, () => ++clientToolResponses),
         onRetry: (agent, n, err) => {
           this.d.logError?.(err);

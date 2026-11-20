@@ -13,6 +13,7 @@ export interface FallbackOptions<T> {
   attempt: (agent: string) => Promise<T>;
   isCancelled: () => boolean;
   canRetry?: () => boolean;
+  shouldFallbackImmediately?: (err: unknown) => boolean;
   onRetry?: (agent: string, retryNo: number, err: unknown) => void;
   onFallback?: (err: unknown) => void;
 }
@@ -52,6 +53,7 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
         lastErr = e;
         if (o.isCancelled()) throw new CancelledError();
         if (o.canRetry && !o.canRetry()) throw new ForgeFailure('The run stopped after an approved operation; automatic replay was skipped.');
+        if (a === 0 && o.shouldFallbackImmediately?.(e)) break;
         if (i < o.retries) {
           o.onRetry?.(agent, i + 1, e);
           await o.sleep(retryDelay(e, o.backoffMs * 2 ** i));
