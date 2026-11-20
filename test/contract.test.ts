@@ -31,6 +31,26 @@ describe('TrueForge wire contract', () => {
     expect(requests.at(-1)?.url).toBe('http://contract.test/api/v1/agents/agent-id');
     expect(requests.at(-1)?.method).toBe('PUT');
   });
+  it('preserves an opt-in fallback model while synchronizing its committed agent settings', async () => {
+    const requests: { url: string; method: string; body: any }[] = [];
+    const configured = {
+      id: 'fallback-id',
+      name: 'forge-agent-fallback',
+      description: 'Existing fallback',
+      manifest: { model: { name: 'forge-fallback/gemini-2.5-flash', params: { temperature: 0.1 } } },
+    };
+    const client = new TrueForge({ baseUrl: 'http://contract.test', fetch: async (url, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      requests.push({ url: String(url), method: init?.method ?? 'GET', body });
+      if (init?.method === 'GET') return Response.json({ data: [configured], pagination: {} });
+      return Response.json({ data: configured });
+    }});
+    const fallback = (await loadAgentFiles('agents')).filter((agent) => agent.name === 'forge-agent-fallback');
+    expect((await syncAgents(client, fallback))[0]?.ok).toBe(true);
+    const update = requests.find((request) => request.method === 'PUT')!;
+    expect(update.body.manifest.model.name).toBe('forge-fallback/gemini-2.5-flash');
+    expect(update.body.manifest.instructions).toBe(fallback[0]!.manifest.instructions);
+  });
   it('keeps approvals after terminal done and uses approval owner thread and source event', async () => {
     const message = toolMsg('source', 'call', 'propose_write', { path: 'a', new_content: 'b' });
     const pending = { ...approvalRequired('call', 'source'), threadId: 'child-thread' };

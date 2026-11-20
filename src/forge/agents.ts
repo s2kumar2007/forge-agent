@@ -25,8 +25,14 @@ export async function syncAgents(client: TrueForge, agents: AgentFile[]): Promis
     let lastError: unknown;
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        const existing = await findAgentId(client, a.name);
-        if (existing) await client.agents.update(existing, { description: a.description, manifest: a.manifest });
+        const existing = await findAgent(client, a.name);
+        if (existing) {
+          const configuredModel = a.name === 'forge-agent-fallback' ? existing.manifest.model.name : undefined;
+          const manifest = configuredModel?.startsWith('forge-fallback/')
+            ? { ...a.manifest, model: { ...a.manifest.model, name: configuredModel } }
+            : a.manifest;
+          await client.agents.update(existing.id, { description: a.description, manifest });
+        }
         else await client.agents.create({ name: a.name, description: a.description, manifest: a.manifest });
         lastError = undefined;
         break;
@@ -44,10 +50,10 @@ export async function syncAgents(client: TrueForge, agents: AgentFile[]): Promis
   return results;
 }
 
-async function findAgentId(client: TrueForge, name: string): Promise<string | undefined> {
+async function findAgent(client: TrueForge, name: string): Promise<TrueForgeApi.Agent | undefined> {
   const page = await client.agents.list({ agentName: name, limit: 100 });
   for await (const agent of page) {
-    if (agent.name === name) return agent.id;
+    if (agent.name === name) return agent;
   }
   return undefined;
 }
