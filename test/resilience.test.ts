@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { runWithFallback, ForgeFailure, CancelledError } from '../src/agent/resilience';
 import { AgentController, sanitizeReason } from '../src/agent/controller';
 import { ReviewApprovals } from '../src/review/approvals';
@@ -51,6 +51,32 @@ describe('controller resilience (stage 7)', () => {
     const approvals = new ReviewApprovals({ root, ui: { reviewHunks: async () => [], confirmCommand: async () => false, close() {} }, store: new DecisionStore(), readText: async () => undefined });
     return new AgentController({ getClient: () => tf.client, approvals, agents: () => ({ primary: 'forge-agent', fallback: 'forge-agent-fallback' }), retries: 2, backoffMs: 1, sleep: async () => {} });
   };
+
+  it.each([
+    ['HTTP 401 authentication failure', 'HTTP 401 Unauthorized'],
+    ['HTTP 403 authentication failure', 'HTTP 403 Forbidden'],
+    ['network failure', 'fetch failed'],
+  ])('switches to fallback on %s before an approval', async (_label, message) => {
+    const { root } = tempRepo();
+    const tf = new FakeTrueForge({
+      'forge-agent': [() => { throw new Error(message); }],
+      'forge-agent-fallback': [() => [created(), done()]],
+    });
+    const decide = vi.fn(async () => ({ status: 'allow' as const }));
+    const approvals = { decide, cancelAll() {} };
+    const ctl = new AgentController({
+      getClient: () => tf.client,
+      approvals,
+      agents: () => ({ primary: 'forge-agent', fallback: 'forge-agent-fallback' }),
+      sleep: async () => {},
+    });
+    const ui = new RecordingUi();
+    await ctl.run('hello', ui);
+    expect(ui.result?.status).toBe('done');
+    expect([...tf.sessions.values()]).toEqual(['forge-agent', 'forge-agent-fallback']);
+    expect(decide).not.toHaveBeenCalled();
+    expect(ui.notices.some((notice) => notice.startsWith('Primary model failed, using fallback:'))).toBe(true);
+  });
 
   it('network errors on the primary -> fallback agent answers in a NEW session; non-blocking notice; workspace untouched', async () => {
     const { root, gitStatus } = tempRepo();
