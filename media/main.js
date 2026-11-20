@@ -36,6 +36,7 @@ window.addEventListener('message', ({ data: m }) => {
     }
     case 'tool': add('tool', 'tool call: ' + m.name); break;
     case 'notice': add('notice', m.text); break;
+    case 'session': add('notice', 'Session: ' + m.id); break;
     case 'done':
       if (m.status === 'error') add('error', m.message || 'The request failed.');
       else if (m.status === 'cancelled') add('notice', m.message || 'Cancelled - no changes applied');

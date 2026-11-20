@@ -56,5 +56,7 @@ export class RecordingUi implements AgentUi {
   notice(t: string) { this.notices.push(t); }
   events: string[] = [];
   finished(i: FinishInfo) { this.result = i; }
+  sessions: string[] = [];
   eventLine(t: string) { this.events.push(t); }
+  session(id: string) { this.sessions.push(id); }
 }

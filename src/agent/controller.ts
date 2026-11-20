@@ -137,6 +137,7 @@ export class AgentController {
       this.d.onSessionCreated?.(sid);
     }
     this.sessionId = sid;
+    ui.session?.(sid);
     if (this.cancelled) { await client.sessions.cancel(sid, {}).catch(() => {}); return 'cancelled'; }
 
     const messageContent = rebuildRequest ? await rebuildRequest(agent) : request;

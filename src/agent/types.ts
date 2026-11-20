@@ -22,4 +22,5 @@ export interface AgentUi {
   notice(text: string): void;
   finished(info: FinishInfo): void;
   eventLine?(text: string): void;
+  session?(id: string): void;
 }
