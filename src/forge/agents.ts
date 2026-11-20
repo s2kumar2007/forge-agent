@@ -50,6 +50,11 @@ export async function syncAgents(client: TrueForge, agents: AgentFile[]): Promis
   return results;
 }
 
+export async function getAgentModel(client: TrueForge, name: string): Promise<string | undefined> {
+  const agent = await findAgent(client, name);
+  return agent?.manifest.model.name;
+}
+
 async function findAgent(client: TrueForge, name: string): Promise<TrueForgeApi.Agent | undefined> {
   const page = await client.agents.list({ agentName: name, limit: 100 });
   for await (const agent of page) {

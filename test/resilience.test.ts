@@ -58,12 +58,31 @@ describe('controller resilience (stage 7)', () => {
     const tf = new FakeTrueForge({ 'forge-agent': [boom, boom, boom], 'forge-agent-fallback': [() => [created(), delta('m1', 'fallback answer'), done()]] });
     const ui = new RecordingUi();
     await build(root, tf).run('hello', ui);
-    expect(ui.notices).toContain('Primary model failed, using fallback');
+    expect(ui.notices.some((message) => message.startsWith('Primary model failed, using fallback:'))).toBe(true);
     expect(ui.text).toBe('fallback answer');
     expect(ui.result?.status).toBe('done');
     expect(new Set(tf.sessions.values())).toEqual(new Set(['forge-agent', 'forge-agent-fallback']));
     expect(tf.inputs.at(-1)![0]).toEqual(tf.inputs[0]![0]); // same request re-sent
     expect(gitStatus()).toBe('');
+  });
+
+  it('names the configured fallback model without showing secrets or stack text', async () => {
+    const { root } = tempRepo();
+    const fail = () => { throw new Error('HTTP 401 Unauthorized: key: test-secret\n    at providerCall'); };
+    const tf = new FakeTrueForge({ primary: [fail], fallback: [() => [created(), done()]] });
+    const approvals = new ReviewApprovals({ root, ui: { reviewHunks: async () => [], confirmCommand: async () => false, close() {} }, store: new DecisionStore(), readText: async () => undefined });
+    const ctl = new AgentController({
+      getClient: () => tf.client,
+      approvals,
+      agents: () => ({ primary: 'primary', fallback: 'fallback', fallbackModel: 'forge-fallback/gemini-2.5-flash' }),
+      sleep: async () => {},
+    });
+    const ui = new RecordingUi();
+    await ctl.run('hello', ui);
+    const notice = ui.notices.find((message) => message.includes('using fallback'));
+    expect(notice).toBe('Primary model failed, using fallback: forge-fallback/gemini-2.5-flash');
+    expect(notice).not.toContain('test-secret');
+    expect(notice).not.toContain('providerCall');
   });
 
   it('turn.done status=error counts as a failure too', async () => {

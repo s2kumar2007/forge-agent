@@ -21,7 +21,7 @@ function isServerFailure(err: unknown): boolean {
 export interface ControllerDeps {
   getClient: () => TrueForge;
   approvals: ApprovalHandler;
-  agents: () => { primary: string; fallback?: string };
+  agents: () => { primary: string; fallback?: string; fallbackModel?: string };
   retries?: number;
   backoffMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -38,8 +38,9 @@ export function sanitizeReason(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   let firstLine = raw.split(/[\r\n]+/)[0]?.trim() || 'unknown error';
   firstLine = firstLine
-    .replace(/(?:Bearer\s+|token\s+|key[:=]\s*)[a-zA-Z0-9_\-\.]+/gi, '[REDACTED]')
+    .replace(/(?:Bearer\s+|(?:api[-_ ]?)?token\s*[:=]?\s*|key\s*[:=]\s*)[a-zA-Z0-9_\-\.]+/gi, '[REDACTED]')
     .replace(/authorization:\s*[^\s]+/gi, 'authorization: [REDACTED]')
+    .replace(/\b(?:sk-|gsk_|AIza)[A-Za-z0-9_-]{12,}\b/g, '[REDACTED]')
     .trim();
   if (firstLine.length > 120) {
     firstLine = firstLine.slice(0, 117) + '...';
@@ -103,13 +104,16 @@ export class AgentController {
           const reason = sanitizeReason(err);
           ui.notice(`Request to "${agent}" failed (${reason}), retrying (${n})...`);
         },
-        onFallback: () => ui.notice('Primary model failed, using fallback'),
+        onFallback: () => {
+          const model = sanitizeReason(new Error(cfg.fallbackModel ?? cfg.fallback ?? 'fallback'));
+          ui.notice(`Primary model failed, using fallback: ${model}`);
+        },
       });
       ui.finished(outcome === 'cancelled' ? this.cancelInfo() : { status: 'done' });
     } catch (e) {
       if (e instanceof CancelledError) ui.finished(this.cancelInfo());
       else {
-        const base = e instanceof ForgeFailure ? e.message : `Forge could not complete the request (${e instanceof Error ? e.message.split('\n')[0] : 'unknown error'}).`;
+        const base = e instanceof ForgeFailure ? e.message : `Forge could not complete the request (${sanitizeReason(e)}).`;
         ui.finished({ status: 'error', message: `${base} ${this.approvedOperations ? `${this.approvedOperations} approved operation(s) may have completed; inspect the workspace and use "Forge: Undo last applied change" to revert.` : 'No changes were made to your workspace.'}` });
       }
     } finally {
