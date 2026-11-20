@@ -56,6 +56,7 @@ export class ChatPanel {
       toolCall: (name) => this.post({ type: 'tool', name }),
       notice: (t) => { this.post({ type: 'notice', text: t }); void vscode.window.showWarningMessage('Forge: ' + t); },
       finished: (info) => this.post({ type: 'done', status: info.status, message: info.message }),
+      eventLine: (t) => this.post({ type: 'notice', text: t }),
     };
     try {
       const buildMessage = async (budget: number): Promise<string> => {

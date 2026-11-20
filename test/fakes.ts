@@ -54,5 +54,7 @@ export class RecordingUi implements AgentUi {
   textDelta(_id: string, t: string) { this.text += t; }
   toolCall(n: string) { this.tools.push(n); }
   notice(t: string) { this.notices.push(t); }
+  events: string[] = [];
   finished(i: FinishInfo) { this.result = i; }
+  eventLine(t: string) { this.events.push(t); }
 }

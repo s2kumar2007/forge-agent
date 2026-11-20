@@ -147,6 +147,7 @@ export class AgentController {
     for (let round = 0; round < 200; round++) {
       const res = await runTurn(client, sid, input, {
         onTextDelta: (id, t) => ui.textDelta(id, t),
+        onEventLine: (line) => ui.eventLine?.(line),
         onToolCall: (n) => {
           hadToolCalls = true;
           if (n === 'propose_write') hadProposeWrite = true;

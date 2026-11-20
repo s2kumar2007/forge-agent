@@ -19,6 +19,7 @@ export interface TurnResult {
 export interface TurnHandlers {
   onTextDelta(messageId: string, text: string): void;
   onToolCall(name: string): void;
+  onEventLine?(text: string): void;
 }
 
 /**
@@ -81,6 +82,20 @@ export async function runTurn(
           result.toolResponses.push({ toolCallId: ref.id, threadId: event.threadId });
         }
         result.status = 'paused';
+        break;
+      case 'thread.created':
+        if (event.threadId !== 'main') {
+          const rawTitle = (event as { title?: string }).title?.trim();
+          const title = rawTitle && !/^subagent\b/i.test(rawTitle) ? ` ${rawTitle}` : rawTitle ? ` ${rawTitle.replace(/^subagent\s*/i, '')}` : '';
+          handlers.onEventLine?.(`Subagent${title} started`);
+        }
+        break;
+      case 'thread.done':
+        if (event.threadId !== 'main') {
+          const rawTitle = (event as { title?: string }).title?.trim();
+          const title = rawTitle && !/^subagent\b/i.test(rawTitle) ? ` ${rawTitle}` : rawTitle ? ` ${rawTitle.replace(/^subagent\s*/i, '')}` : '';
+          handlers.onEventLine?.(`Subagent${title} finished`);
+        }
         break;
       case 'turn.done':
         terminal = true;
