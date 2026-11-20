@@ -97,6 +97,12 @@ export async function runTurn(
           handlers.onEventLine?.(`Subagent${title} finished`);
         }
         break;
+      case 'thread.context_compaction_started':
+        handlers.onEventLine?.('Context compaction started');
+        break;
+      case 'thread.context_compaction_finished':
+        handlers.onEventLine?.('Context compacted');
+        break;
       case 'turn.done':
         terminal = true;
         result.status = event.state.status === 'done' && (result.approvals.length > 0 || result.toolResponses.length > 0)
@@ -105,8 +111,8 @@ export async function runTurn(
         if (event.state.status === 'error') result.error = event.state.message;
         break;
       default:
-        // Any unhandled event types (including thread.context_compaction_started,
-        // thread.context_compaction_finished, or any new types) are safely ignored.
+        // Any unhandled event types or new types are safely ignored.
+
         break;
     }
   }
