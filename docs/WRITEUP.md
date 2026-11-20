@@ -22,9 +22,9 @@ Proposals use complete new_content or bounded exact edits against unique anchors
 
 Agent mode always attempts retrieval. Keywords, ranked literal/symbol matches, importers and explicit @file/@symbol mentions select file snippets, signatures and a compact repo map. Reasons and real file labels appear in Context used. Dense hit windows and explicit heads are capped at 40 lines; signatures are capped at 25. Tiny files can naturally fit within a snippet.
 
-The Agent panel provides full visibility into context assembly via the Context used block. A summary line displays the token budget utilization: `Context: <N> items, <used> of <budget> estimated tokens` (such as `Context: 4 items, 991 of 6000 estimated tokens`). Each included item displays its path, rationale, and individual estimated token cost (`(<tokens> estimated tokens)`).
+The Agent panel provides full visibility into context assembly via the Context used block. A summary line displays the token budget utilization: `Context: <N> items, <used> of <budget> estimated tokens` (such as `Context: 4 items, 991 of 2000 estimated tokens`). Each included item displays its path, rationale, and individual estimated token cost (`(<tokens> estimated tokens)`).
 
-The default 6000-token limit is a chars/4 estimate of the rendered CONTEXT block, including labels, reasons, fences, separators and preamble. It is not an exact model tokenizer count or a limit on the whole turn (request/history/instructions/tool schemas are separate). A synthetic 5000-file fixture verifies the rendered estimate remains within the budget. Context reads enforce realpath containment. Stop during assembly prevents the subsequent model request.
+The default 2000-token limit is a chars/4 estimate of the rendered CONTEXT block, including labels, reasons, fences, separators and preamble. It is not an exact model tokenizer count or a limit on the whole turn (request/history/instructions/tool schemas are separate). A synthetic 5000-file fixture verifies the rendered estimate remains within the budget. Context reads enforce realpath containment. Stop during assembly prevents the subsequent model request.
 
 ## 5. Model setup
 

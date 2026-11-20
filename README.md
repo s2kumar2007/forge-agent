@@ -202,7 +202,7 @@ Forge Agent automatically selects relevant workspace context before executing a 
 | `forge.baseUrl` | `http://localhost:8790` | TrueForge server URL |
 | `forge.agentName` | `forge-agent` | Primary agent |
 | `forge.fallbackAgentName` | `forge-agent-fallback` | Fallback agent |
-| `forge.contextBudget` | `6000` | Agent context token estimate |
+| `forge.contextBudget` | `2000` | Agent context token estimate |
 | `forge.fallbackContextBudget` | `1500` | Groq fallback context token estimate |
 
 The context budget is estimated from characters (`characters / 4`). It is not an exact provider tokenizer limit.
