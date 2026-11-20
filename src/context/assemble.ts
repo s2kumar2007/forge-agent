@@ -7,7 +7,9 @@ import type { SearchHit, SymbolHit } from '../workspace/types';
 export interface ContextDeps {
   listFiles(): Promise<string[]>;
   searchKeyword(keyword: string): Promise<SearchHit[]>;
+  searchKeywords?(keywords: string[], signal?: AbortSignal): Promise<Map<string, SearchHit[]>>;
   searchImporters(moduleName: string): Promise<SearchHit[]>;
+  searchAllImporters?(moduleNames: string[], signal?: AbortSignal): Promise<Map<string, SearchHit[]>>;
   readText(relPath: string): Promise<string | undefined>;
   findSymbol(name: string): Promise<SymbolHit | undefined>;
 }
@@ -44,14 +46,17 @@ export function windows(hitLines: number[], total: number, pad = 6, maxSlices = 
  *   3. a compact repo map (file tree) limited to ~20% of the budget
  * For each ranked file: its top-level signatures + the slices around the hits.
  */
-export async function assembleContext(request: string, deps: ContextDeps, budget: number): Promise<ContextResult> {
+export async function assembleContext(request: string, deps: ContextDeps, budget: number, signal?: AbortSignal): Promise<ContextResult> {
+  if (signal?.aborted) throw new Error('Operation aborted');
   const keywords = extractKeywords(request);
   const mentions = parseMentions(request);
   const files = (await deps.listFiles()).filter((f) => SOURCE_RE.test(f));
+  if (signal?.aborted) throw new Error('Operation aborted');
   const items: ContextItem[] = [];
 
   // --- 1. explicit mentions ---
   for (const f of mentions.files) {
+    if (signal?.aborted) throw new Error('Operation aborted');
     const text = await deps.readText(f);
     if (text === undefined) continue;
     const lines = text.split('\n');
@@ -60,6 +65,7 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
     items.push({ label: `${f}:1-${Math.min(40, lines.length)} + signatures`, reason: 'mentioned with @file', text: body, priority: 100 });
   }
   for (const name of mentions.symbols) {
+    if (signal?.aborted) throw new Error('Operation aborted');
     const hit = await deps.findSymbol(name);
     const text = hit ? await deps.readText(hit.path) : undefined;
     if (!hit || text === undefined) continue;
@@ -75,7 +81,15 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
   // `front` puts structural reasons (imports) ahead of the many keyword-hit reasons so they survive the display cap.
   const bump = (f: string, n: number, reason: string, front = false) => { score.set(f, (score.get(f) ?? 0) + n); why.set(f, front ? [reason, ...(why.get(f) ?? [])] : [...(why.get(f) ?? []), reason]); };
 
-  const perKeyword = await Promise.all(keywords.map(async (k) => [k, await deps.searchKeyword(k)] as const));
+  let perKeyword: [string, SearchHit[]][];
+  if (deps.searchKeywords) {
+    const kwMap = await deps.searchKeywords(keywords, signal);
+    perKeyword = keywords.map((k) => [k, kwMap.get(k) ?? []] as const);
+  } else {
+    perKeyword = await Promise.all(keywords.map(async (k) => [k, await deps.searchKeyword(k)] as const));
+  }
+  if (signal?.aborted) throw new Error('Operation aborted');
+
   for (const [k, hits] of perKeyword) {
     const byFile = new Map<string, SearchHit[]>();
     for (const h of hits) byFile.set(h.path, [...(byFile.get(h.path) ?? []), h]);
@@ -95,6 +109,7 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
   const top = [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([f]) => f);
   const symCache = new Map<string, ReturnType<typeof topLevelSymbols>>();
   for (const f of top) {
+    if (signal?.aborted) throw new Error('Operation aborted');
     const text = await deps.readText(f);
     if (text === undefined) continue;
     const syms = topLevelSymbols(text, f);
@@ -105,11 +120,25 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
     }
   }
   // Files importing the best matches: the code that depends on what we are about to change.
+  const candidateMods: { file: string; mod: string }[] = [];
   for (const f of [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([x]) => x)) {
     const mod = f.replace(/\.[^.]+$/, '').split('/').pop()!;
     if (mod.length < 3 || mod === '__init__') continue;
-    for (const h of await deps.searchImporters(mod)) if (h.path !== f) bump(h.path, 1.5, `imports ${mod}`, true);
+    candidateMods.push({ file: f, mod });
   }
+  if (candidateMods.length > 0) {
+    if (deps.searchAllImporters) {
+      const impMap = await deps.searchAllImporters(candidateMods.map((c) => c.mod), signal);
+      for (const { file: f, mod } of candidateMods) {
+        for (const h of impMap.get(mod) ?? []) if (h.path !== f) bump(h.path, 1.5, `imports ${mod}`, true);
+      }
+    } else {
+      for (const { file: f, mod } of candidateMods) {
+        for (const h of await deps.searchImporters(mod)) if (h.path !== f) bump(h.path, 1.5, `imports ${mod}`, true);
+      }
+    }
+  }
+  if (signal?.aborted) throw new Error('Operation aborted');
 
   const ranked = [...score.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 12);
   for (const [f, sc] of ranked) {

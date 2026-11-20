@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { ContextDeps } from './assemble';
 import type { VsCodeEditorApi } from '../workspace/vscodeApi';
-import { rgFiles, rgRegex, rgText } from '../workspace/ripgrep';
+import { rgAllImporters, rgFiles, rgKeywords, rgRegex, rgText } from './ripgrep';
 import { resolveInsideReal } from '../workspace/paths';
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -18,10 +18,12 @@ export class WorkspaceContextDeps implements ContextDeps {
 
   async listFiles(): Promise<string[]> { return (this.files ??= await rgFiles(this.rgPath, this.root)); }
   searchKeyword(k: string) { return rgText(this.rgPath, this.root, k, 5); }
+  searchKeywords(keywords: string[], signal?: AbortSignal) { return rgKeywords(this.rgPath, this.root, keywords, 5, signal); }
   searchImporters(mod: string) {
     const m = escapeRe(mod);
     return rgRegex(this.rgPath, this.root, `^\\s*(from\\s+[\\w.]*\\b${m}\\b|import\\s+.*\\b${m}\\b)|(require|from)\\s*\\(?['"][^'"]*\\b${m}\\b`, 1);
   }
+  searchAllImporters(modules: string[], signal?: AbortSignal) { return rgAllImporters(this.rgPath, this.root, modules, 1, signal); }
   async readText(rel: string) { try { return await this.api.readText(await resolveInsideReal(this.root, rel)); } catch { return undefined; } }
   async findSymbol(name: string) {
     const hits = await this.api.searchSymbols(name, 10);

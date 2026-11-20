@@ -3,6 +3,7 @@ import { estimateTokens, packContext } from '../src/context/budget';
 import { assembleContext, windows, type ContextDeps } from '../src/context/assemble';
 import { extractKeywords, parseMentions } from '../src/context/keywords';
 import { topLevelSymbols } from '../src/context/symbols';
+import { runRg } from '../src/workspace/ripgrep';
 
 describe('packContext (token budget)', () => {
   const item = (label: string, chars: number, priority: number) => ({ label, reason: 'r', text: ('x'.repeat(39) + '\n').repeat(chars / 40), priority });
@@ -70,5 +71,57 @@ describe('full rendered context bounds',()=>{
     const body=Array.from({length:100},(_,i)=>'# line '+i).join('\n');
     const deps:ContextDeps={listFiles:async()=>['a.py'],searchKeyword:async()=>[],searchImporters:async()=>[],readText:async()=>body,findSymbol:async()=>undefined};
     const r=await assembleContext('@file:a.py',deps,2000);expect(r.text).not.toContain('# line 99');
+  });
+});
+
+describe('ripgrep combined scans & cancellation', () => {
+  const cli = Array.from({ length: 300 }, (_, i) => (i === 100 ? 'def routes_command():' : `# line ${i + 1} config`)).join('\n');
+  const files: Record<string, string> = { 'src/pkg/cli.py': cli, 'tests/test_cli.py': 'from pkg import cli\n\ndef test_x(): pass\n', 'docs/cli.rst': 'CLI\n===\n', 'src/pkg/other.py': 'x = 1\n' };
+  const deps: ContextDeps = {
+    listFiles: async () => Object.keys(files),
+    searchKeyword: async (k) => Object.entries(files).flatMap(([p, t]) => t.split('\n').flatMap((l, i) => (l.toLowerCase().includes(k) ? [{ path: p, line: i + 1, text: l }] : []))).slice(0, 20),
+    searchImporters: async (m) => Object.entries(files).filter(([, t]) => new RegExp(`from \\w+ import ${m}`).test(t)).map(([p]) => ({ path: p, line: 1, text: '' })),
+    readText: async (p) => files[p],
+    findSymbol: async () => undefined,
+  };
+
+  it('cancels runRg immediately if signal is already aborted', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    await expect(runRg('rg-nonexistent', process.cwd(), ['.'], 15000, ac.signal)).rejects.toThrow('Operation aborted');
+  });
+
+  it('kills ripgrep child process when aborted mid-flight', async () => {
+    const ac = new AbortController();
+    const p = runRg('node', process.cwd(), ['-e', 'setTimeout(() => {}, 10000)'], 15000, ac.signal);
+    setTimeout(() => ac.abort(), 20);
+    await expect(p).rejects.toThrow('Operation aborted');
+  });
+
+  it('assembleContext stops immediately on aborted signal', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    await expect(assembleContext('config', deps, 1500, ac.signal)).rejects.toThrow('Operation aborted');
+  });
+
+  it('searchKeywords and searchAllImporters preserve ranking inputs and reasons', async () => {
+    const depsBatched: ContextDeps = {
+      ...deps,
+      searchKeywords: async (kws) => {
+        const m = new Map();
+        for (const k of kws) m.set(k, await deps.searchKeyword(k));
+        return m;
+      },
+      searchAllImporters: async (mods) => {
+        const m = new Map();
+        for (const mod of mods) m.set(mod, await deps.searchImporters(mod));
+        return m;
+      },
+    };
+    const r1 = await assembleContext('add a config command to the cli and test it', deps, 1500);
+    const r2 = await assembleContext('add a config command to the cli and test it', depsBatched, 1500);
+    expect(r2.tokens).toBe(r1.tokens);
+    expect(r2.items.map((i) => i.label)).toEqual(r1.items.map((i) => i.label));
+    expect(r2.items.map((i) => i.reason)).toEqual(r1.items.map((i) => i.reason));
   });
 });
