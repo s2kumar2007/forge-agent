@@ -153,14 +153,14 @@ describe('controller resilience (stage 7)', () => {
 
 
 describe('fault matrix', () => {
-  it.each(['401 Unauthorized', '403 Forbidden', 'connect ECONNREFUSED', '429 rate limited', 'malformed event', 'SSE drop', 'turn error'])('recovers from %s with backoff then a fresh fallback session',async(reason)=>{
+  it.each(['401 Unauthorized', '403 Forbidden', 'connect ECONNREFUSED', 'fetch failed', '429 rate limited', 'malformed event', 'SSE drop', 'turn error'])('recovers from %s with backoff then a fresh fallback session',async(reason)=>{
     const { root,gitStatus }=tempRepo();
     const fail=()=>{throw Error(reason+'\n at private stack');};
     const tf=new FakeTrueForge({p:[fail,fail,fail],f:[()=>[created(),done()]]});
     const sleeps:number[]=[];
     const ctl=new AgentController({getClient:()=>tf.client,approvals:{decide:async()=>({status:'deny',reason:'no'}),cancelAll(){}},agents:()=>({primary:'p',fallback:'f'}),sleep:async ms=>{sleeps.push(ms);}});
     const ui=new RecordingUi();await ctl.run('test',ui);
-    expect(sleeps).toEqual(/^(401|403)\b/.test(reason)?[]:[1000,2000]);expect(ui.result?.status).toBe('done');expect(gitStatus()).toBe('');
+    expect(sleeps).toEqual(/^(401|403)\b|ECONNREFUSED|fetch failed/i.test(reason)?[]:[1000,2000]);expect(ui.result?.status).toBe('done');expect(gitStatus()).toBe('');
   });
   it('retries setup on the next request after activation was offline',async()=>{
     let setup=0;const tf=new FakeTrueForge({p:[()=>[created(),done()]]});
