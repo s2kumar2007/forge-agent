@@ -19,6 +19,7 @@ export interface TurnResult {
 export interface TurnHandlers {
   onTextDelta(messageId: string, text: string): void;
   onToolCall(name: string): void;
+  onEventLine?(text: string): void;
 }
 
 /**
@@ -82,6 +83,26 @@ export async function runTurn(
         }
         result.status = 'paused';
         break;
+      case 'thread.created':
+        if (event.threadId !== 'main') {
+          const rawTitle = (event as { title?: string }).title?.trim();
+          const title = rawTitle && !/^subagent\b/i.test(rawTitle) ? ` ${rawTitle}` : rawTitle ? ` ${rawTitle.replace(/^subagent\s*/i, '')}` : '';
+          handlers.onEventLine?.(`Subagent${title} started`);
+        }
+        break;
+      case 'thread.done':
+        if (event.threadId !== 'main') {
+          const rawTitle = (event as { title?: string }).title?.trim();
+          const title = rawTitle && !/^subagent\b/i.test(rawTitle) ? ` ${rawTitle}` : rawTitle ? ` ${rawTitle.replace(/^subagent\s*/i, '')}` : '';
+          handlers.onEventLine?.(`Subagent${title} finished`);
+        }
+        break;
+      case 'thread.context_compaction_started':
+        handlers.onEventLine?.('Context compaction started');
+        break;
+      case 'thread.context_compaction_finished':
+        handlers.onEventLine?.('Context compacted');
+        break;
       case 'turn.done':
         terminal = true;
         result.status = event.state.status === 'done' && (result.approvals.length > 0 || result.toolResponses.length > 0)
@@ -90,8 +111,8 @@ export async function runTurn(
         if (event.state.status === 'error') result.error = event.state.message;
         break;
       default:
-        // Any unhandled event types (including thread.context_compaction_started,
-        // thread.context_compaction_finished, or any new types) are safely ignored.
+        // Any unhandled event types or new types are safely ignored.
+
         break;
     }
   }

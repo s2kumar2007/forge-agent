@@ -32,12 +32,23 @@ export function briefReason(err: unknown): string {
 /** Quota retry hints can arrive in turn.done text rather than HTTP headers. */
 function retryDelay(error: unknown, exponentialMs: number): number {
   const message = error instanceof Error ? error.message : String(error);
-  if (!/\b429\b/.test(message)) return exponentialMs;
+  if (!/\b429\b/.test(message)) return Math.min(12_000, exponentialMs);
   const hint = /(?:retry|try\s+again)\s+in\s+(\d+(?:\.\d+)?)s\b/i.exec(message);
-  if (!hint) return exponentialMs;
+  if (!hint) return Math.min(12_000, exponentialMs);
   const seconds = Number(hint[1]);
-  if (!Number.isFinite(seconds)) return exponentialMs;
-  return Math.max(exponentialMs, Math.min(60_000, Math.ceil(seconds * 1000) + 250));
+  if (!Number.isFinite(seconds)) return Math.min(12_000, exponentialMs);
+  return Math.max(exponentialMs, Math.min(12_000, Math.ceil(seconds * 1000) + 250));
+}
+
+/** Permanent errors that should fail fast without retrying. */
+export function isPermanentError(err: unknown): boolean {
+  if (!err) return false;
+  const status = (err as any)?.status ?? (err as any)?.statusCode ?? (err as any)?.response?.status;
+  if (status === 400 || status === 401 || status === 403 || status === 404) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  if (/\b(?:400|401|403|404)\b/.test(message)) return true;
+  if (/unauthorized|forbidden|not found/i.test(message) && !/429/i.test(message)) return true;
+  return false;
 }
 
 /**
@@ -48,9 +59,14 @@ function retryDelay(error: unknown, exponentialMs: number): number {
 export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
   const agents = [o.primary, ...(o.fallback && o.fallback !== o.primary ? [o.fallback] : [])];
   let lastErr: unknown;
+  let primaryRetried = false;
+
   for (let a = 0; a < agents.length; a++) {
     const agent = agents[a]!;
-    for (let i = 0; i <= o.retries; i++) {
+    // Avoid double retry stacking: if primary already retried, fallback gets 0 retries
+    const maxRetries = a > 0 && primaryRetried ? 0 : o.retries;
+
+    for (let i = 0; i <= maxRetries; i++) {
       if (o.isCancelled()) throw new CancelledError();
       try {
         return await o.attempt(agent);
@@ -59,7 +75,15 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
         if (o.isCancelled()) throw new CancelledError();
         if (o.canRetry && !o.canRetry()) throw new ForgeFailure('The run stopped after an approved operation; automatic replay was skipped.');
         if (a === 0 && o.shouldFallbackImmediately?.(e)) break;
-        if (i < o.retries) {
+
+        if (a === 0 && i > 0) primaryRetried = true;
+
+        // Fail fast on permanent errors: do not retry them before falling back or failing
+        if (isPermanentError(e)) {
+          break;
+        }
+
+        if (i < maxRetries) {
           o.onRetry?.(agent, i + 1, e);
           await o.sleep(retryDelay(e, o.backoffMs * 2 ** i));
         }

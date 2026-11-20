@@ -195,6 +195,22 @@ Run **Forge: Undo last applied change** to restore the most recently applied For
 
 Native VS Code `Ctrl+Z`/`Cmd+Z` remains available for normal undo behavior.
 
+
+## Context assembly
+
+Forge Agent automatically selects relevant workspace context before executing a turn in Agent mode:
+
+1. **Explicit mentions**: Explicit `@file:path` and `@symbol:name` mentions are granted top priority. File slices are capped at 40 lines plus top-level signatures; symbols provide a bounded window around the target symbol.
+2. **Ranked candidate shortlist**: Keywords extracted from the prompt are searched across the repository using ripgrep. Hits are scored by term matches, path matches, top-level symbol definitions matching keywords, and importing files (downstream consumers of modified modules). Dense hit windows are capped at 40 lines; symbols are capped at 25 signatures.
+3. **Repo map**: A compact file-tree overview is budgeted to at most 20% of the token allocation.
+4. **Token budgeting**: A greedy packer fills items by priority within the configured token budget (default `6000` tokens, or `1500` tokens for the Groq fallback, estimated at ~4 characters per token). Items that exceed available headroom are line-truncated if at least 80 tokens remain, or safely dropped.
+5. **Context used block in the panel**: The Agent chat panel displays a collapsible **Context used** block detailing:
+   - A budget summary line: `Context: <N> items, <used> of <budget> estimated tokens`
+   - Each selected item with its path/slice, estimated token size, and rationale (why it was chosen).
+   - Real TrueForge harness events (subagent lifecycle lines like `Subagent search started` and compaction lines like `Context compacted`) and session identity (`Session: <id>`).
+
+
+
 ## Extension settings
 
 | Setting | Default | Description |
@@ -202,10 +218,21 @@ Native VS Code `Ctrl+Z`/`Cmd+Z` remains available for normal undo behavior.
 | `forge.baseUrl` | `http://localhost:8790` | TrueForge server URL |
 | `forge.agentName` | `forge-agent` | Primary agent |
 | `forge.fallbackAgentName` | `forge-agent-fallback` | Fallback agent |
-| `forge.contextBudget` | `6000` | Agent context token estimate |
+| `forge.contextBudget` | `2000` | Agent context token estimate |
 | `forge.fallbackContextBudget` | `1500` | Groq fallback context token estimate |
 
 The context budget is estimated from characters (`characters / 4`). It is not an exact provider tokenizer limit.
+
+## Performance tuning
+
+The extension incorporates latency optimizations without weakening safety:
+
+- **Context assembly scans**: Ripgrep literal keyword searches and module importer queries are combined into single alternated executions rather than spawning separate processes per keyword, preserving ranking inputs and cancellation responsiveness.
+- **Per-request read cache**: File contents and top-level symbol parses are cached in memory for the duration of a single `assembleContext` run and discarded at turn completion, preventing duplicate disk reads and regex AST parses without retaining stale data across requests.
+- **Lower default context budget**: Default `forge.contextBudget` is set to `2000` tokens (down from 6000), reducing initial prompt token payloads while keeping `forge.fallbackContextBudget` at `1500`.
+- **Fast retry and fail-fast resilience**: Permanent HTTP errors (401, 403, 400, 404) fail fast without retrying on the primary model, immediately falling back. Quota (429) wait hints are bounded to 12s (capped from 60s), adapter retries are capped at 2 attempts, and double-retry stacking across primary and fallback models is eliminated, dropping worst-case retry latency to ~20–30s.
+- **Tuned fallback agent**: Fallback agent reasoning effort is set to `low` and `max_tokens` is capped at `10000`, speeding up recovery turns.
+- **Safety rules unchanged**: MCP tool names (`read_file`, `list_dir`, `search_workspace`, `propose_write`, `run_command`), approval flows, serialized writes/commands, and per-hunk diff review remain strictly intact.
 
 ## Groq compatibility behavior
 

@@ -11,6 +11,7 @@ type ToWebview =
   | { type: 'delta'; id: string; text: string }
   | { type: 'tool'; name: string }
   | { type: 'notice'; text: string }
+  | { type: 'session'; id: string }
   | { type: 'done'; status: string; message?: string }
   | { type: 'busy'; value: boolean }
   | { type: 'context'; items: { label: string; reason: string; tokens: number }[]; tokens: number; budget: number }
@@ -56,11 +57,13 @@ export class ChatPanel {
       toolCall: (name) => this.post({ type: 'tool', name }),
       notice: (t) => { this.post({ type: 'notice', text: t }); void vscode.window.showWarningMessage('Forge: ' + t); },
       finished: (info) => this.post({ type: 'done', status: info.status, message: info.message }),
+      eventLine: (t) => this.post({ type: 'notice', text: t }),
+      session: (id) => this.post({ type: 'session', id }),
     };
     try {
       const buildMessage = async (budget: number): Promise<string> => {
         try {
-          const ctx = await assembleContext(text, this.deps, budget);
+          const ctx = await assembleContext(text, this.deps, budget, this.sendAbort.signal);
           this.post({
             type: 'context',
             items: ctx.items.map((i) => ({ label: i.label, reason: i.reason, tokens: i.tokens })),

@@ -7,7 +7,9 @@ import type { SearchHit, SymbolHit } from '../workspace/types';
 export interface ContextDeps {
   listFiles(): Promise<string[]>;
   searchKeyword(keyword: string): Promise<SearchHit[]>;
+  searchKeywords?(keywords: string[], signal?: AbortSignal): Promise<Map<string, SearchHit[]>>;
   searchImporters(moduleName: string): Promise<SearchHit[]>;
+  searchAllImporters?(moduleNames: string[], signal?: AbortSignal): Promise<Map<string, SearchHit[]>>;
   readText(relPath: string): Promise<string | undefined>;
   findSymbol(name: string): Promise<SymbolHit | undefined>;
 }
@@ -44,24 +46,46 @@ export function windows(hitLines: number[], total: number, pad = 6, maxSlices = 
  *   3. a compact repo map (file tree) limited to ~20% of the budget
  * For each ranked file: its top-level signatures + the slices around the hits.
  */
-export async function assembleContext(request: string, deps: ContextDeps, budget: number): Promise<ContextResult> {
+export async function assembleContext(request: string, deps: ContextDeps, budget: number, signal?: AbortSignal): Promise<ContextResult> {
+  if (signal?.aborted) throw new Error('Operation aborted');
+  const fileTextCache = new Map<string, string | undefined>();
+  const symCache = new Map<string, ReturnType<typeof topLevelSymbols>>();
+
+  const cachedReadText = async (p: string): Promise<string | undefined> => {
+    if (fileTextCache.has(p)) return fileTextCache.get(p);
+    const text = await deps.readText(p);
+    fileTextCache.set(p, text);
+    return text;
+  };
+
+  const cachedTopLevelSymbols = (text: string, p: string) => {
+    let syms = symCache.get(p);
+    if (!syms) {
+      syms = topLevelSymbols(text, p);
+      symCache.set(p, syms);
+    }
+    return syms;
+  };
   const keywords = extractKeywords(request);
   const mentions = parseMentions(request);
   const files = (await deps.listFiles()).filter((f) => SOURCE_RE.test(f));
+  if (signal?.aborted) throw new Error('Operation aborted');
   const items: ContextItem[] = [];
 
   // --- 1. explicit mentions ---
   for (const f of mentions.files) {
-    const text = await deps.readText(f);
+    if (signal?.aborted) throw new Error('Operation aborted');
+    const text = await cachedReadText(f);
     if (text === undefined) continue;
     const lines = text.split('\n');
-    const sigs = topLevelSymbols(text, f).slice(0, 25).map((s) => `${s.line}: ${s.signature}`).join('\n');
+    const sigs = cachedTopLevelSymbols(text, f).slice(0, 25).map((s) => `${s.line}: ${s.signature}`).join('\n');
     const body = `${slice(lines, 1, 40)}\n...\n[signatures]\n${sigs}`;
     items.push({ label: `${f}:1-${Math.min(40, lines.length)} + signatures`, reason: 'mentioned with @file', text: body, priority: 100 });
   }
   for (const name of mentions.symbols) {
+    if (signal?.aborted) throw new Error('Operation aborted');
     const hit = await deps.findSymbol(name);
-    const text = hit ? await deps.readText(hit.path) : undefined;
+    const text = hit ? await cachedReadText(hit.path) : undefined;
     if (!hit || text === undefined) continue;
     const lines = text.split('\n');
     const a = Math.max(1, hit.line - 2), b = Math.min(lines.length, hit.line + 40);
@@ -75,7 +99,15 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
   // `front` puts structural reasons (imports) ahead of the many keyword-hit reasons so they survive the display cap.
   const bump = (f: string, n: number, reason: string, front = false) => { score.set(f, (score.get(f) ?? 0) + n); why.set(f, front ? [reason, ...(why.get(f) ?? [])] : [...(why.get(f) ?? []), reason]); };
 
-  const perKeyword = await Promise.all(keywords.map(async (k) => [k, await deps.searchKeyword(k)] as const));
+  let perKeyword: [string, SearchHit[]][];
+  if (deps.searchKeywords) {
+    const kwMap = await deps.searchKeywords(keywords, signal);
+    perKeyword = keywords.map((k) => [k, kwMap.get(k) ?? []] as const);
+  } else {
+    perKeyword = await Promise.all(keywords.map(async (k) => [k, await deps.searchKeyword(k)] as const));
+  }
+  if (signal?.aborted) throw new Error('Operation aborted');
+
   for (const [k, hits] of perKeyword) {
     const byFile = new Map<string, SearchHit[]>();
     for (const h of hits) byFile.set(h.path, [...(byFile.get(h.path) ?? []), h]);
@@ -93,30 +125,43 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
   }
   // Symbol-name matches among the current top candidates.
   const top = [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([f]) => f);
-  const symCache = new Map<string, ReturnType<typeof topLevelSymbols>>();
   for (const f of top) {
-    const text = await deps.readText(f);
+    if (signal?.aborted) throw new Error('Operation aborted');
+    const text = await cachedReadText(f);
     if (text === undefined) continue;
-    const syms = topLevelSymbols(text, f);
-    symCache.set(f, syms);
+    const syms = cachedTopLevelSymbols(text, f);
     for (const k of keywords) {
       const m = syms.find((s) => s.name.toLowerCase().includes(k));
       if (m) { bump(f, 4, `defines "${m.name}"`); hitLines.set(f, [...(hitLines.get(f) ?? []), m.line]); }
     }
   }
   // Files importing the best matches: the code that depends on what we are about to change.
+  const candidateMods: { file: string; mod: string }[] = [];
   for (const f of [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([x]) => x)) {
     const mod = f.replace(/\.[^.]+$/, '').split('/').pop()!;
     if (mod.length < 3 || mod === '__init__') continue;
-    for (const h of await deps.searchImporters(mod)) if (h.path !== f) bump(h.path, 1.5, `imports ${mod}`, true);
+    candidateMods.push({ file: f, mod });
   }
+  if (candidateMods.length > 0) {
+    if (deps.searchAllImporters) {
+      const impMap = await deps.searchAllImporters(candidateMods.map((c) => c.mod), signal);
+      for (const { file: f, mod } of candidateMods) {
+        for (const h of impMap.get(mod) ?? []) if (h.path !== f) bump(h.path, 1.5, `imports ${mod}`, true);
+      }
+    } else {
+      for (const { file: f, mod } of candidateMods) {
+        for (const h of await deps.searchImporters(mod)) if (h.path !== f) bump(h.path, 1.5, `imports ${mod}`, true);
+      }
+    }
+  }
+  if (signal?.aborted) throw new Error('Operation aborted');
 
   const ranked = [...score.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 12);
   for (const [f, sc] of ranked) {
-    const text = await deps.readText(f);
+    const text = await cachedReadText(f);
     if (text === undefined) continue;
     const lines = text.split('\n');
-    const syms = symCache.get(f) ?? topLevelSymbols(text, f);
+    const syms = cachedTopLevelSymbols(text, f);
     const reason = [...new Set(why.get(f))].slice(0, 5).join('; ');
     const sigs = syms.slice(0, 25).map((s) => `${s.line}: ${s.signature}`).join('\n');
     if (sigs) items.push({ label: `${f} (signatures)`, reason, text: sigs, priority: 40 + sc });

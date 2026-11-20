@@ -36,15 +36,16 @@ window.addEventListener('message', ({ data: m }) => {
     }
     case 'tool': add('tool', 'tool call: ' + m.name); break;
     case 'notice': add('notice', m.text); break;
+    case 'session': add('notice', 'Session: ' + m.id); break;
     case 'done':
       if (m.status === 'error') add('error', m.message || 'The request failed.');
       else if (m.status === 'cancelled') add('notice', m.message || 'Cancelled - no changes applied');
       break;
     case 'context': {
       const d = document.createElement('details'); d.className = 'msg notice';
-      const sm = document.createElement('summary'); sm.textContent = 'Context used (' + m.tokens + ' / ' + m.budget + ' tokens, ' + m.items.length + ' items)';
+      const sm = document.createElement('summary'); sm.textContent = 'Context: ' + m.items.length + ' items, ' + m.tokens + ' of ' + m.budget + ' estimated tokens';
       d.append(sm);
-      for (const it of m.items) { const r = document.createElement('div'); r.textContent = it.label + ' [' + it.tokens + ' tok] - ' + it.reason; d.append(r); }
+      for (const it of m.items) { const r = document.createElement('div'); r.className = 'context-item'; r.textContent = it.label + ' (' + it.tokens + ' estimated tokens) - ' + it.reason; d.append(r); }
       log.appendChild(d); log.scrollTop = log.scrollHeight; break;
     }
     case 'suggestions': showSuggestions(m.items); break;

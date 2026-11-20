@@ -53,7 +53,7 @@
         },
         "forge.contextBudget": {
           "type": "number",
-          "default": 6000,
+          "default": 2000,
           "minimum": 500,
           "description": "Token budget (~4 chars/token) for automatically assembled context."
         },

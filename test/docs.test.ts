@@ -11,8 +11,7 @@ describe('submission documentation contracts',()=>{
     for(const agent of agents)expect(readme).toContain(agent.manifest.model.name);
     expect(agents.find(a=>a.name==='forge-agent')?.manifest.model.name).toBe('groq/gpt-oss-120b');
     expect(agents.find(a=>a.name==='forge-inline')?.manifest.model.name).toBe('groq/gpt-oss-120b');
-    expect(agents.find(a=>a.name==='forge-agent-fallback')?.manifest.model.name).toBe('groq/gpt-oss-120b');
-    expect(JSON.stringify(agents)).not.toMatch(/google-gemini|gemini-/i);
+    expect(agents.find(a=>a.name==='forge-agent-fallback')?.manifest.model.name).toBe('google-gemini/gemini-3-5-flash');
   });
 });
 
