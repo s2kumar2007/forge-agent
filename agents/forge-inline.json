@@ -33,7 +33,7 @@
           "enabled": true,
           "trigger": {
             "type": "input_tokens",
-            "value": 60000
+            "value": 5500
           }
         },
         "large_tool_response": {

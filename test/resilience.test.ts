@@ -165,6 +165,18 @@ describe('fault matrix', () => {
     expect(ui.result?.status).toBe('done');
     expect(gitStatus()).toBe('');
   });
+  it('fails fast on 413 Request too large without backoff then recovers with a fresh fallback session', async () => {
+    const { root, gitStatus } = tempRepo();
+    const fail = () => { throw Error('[Model Error] Request failed (413): Request too large for model'); };
+    const tf = new FakeTrueForge({ p: [fail], f: [() => [created(), done()]] });
+    const sleeps: number[] = [];
+    const ctl = new AgentController({ getClient: () => tf.client, approvals: { decide: async () => ({ status: 'deny', reason: 'no' }), cancelAll() {} }, agents: () => ({ primary: 'p', fallback: 'f' }), sleep: async (ms) => { sleeps.push(ms); } });
+    const ui = new RecordingUi();
+    await ctl.run('test', ui);
+    expect(sleeps).toEqual([]);
+    expect(ui.result?.status).toBe('done');
+    expect(gitStatus()).toBe('');
+  });
   it.each(['connect ECONNREFUSED', '429 rate limited', 'malformed event', 'SSE drop', 'turn error'])('recovers from %s with backoff then a fresh fallback session',async(reason)=>{
     const { root,gitStatus }=tempRepo();
     const fail=()=>{throw Error(reason+'\n at private stack');};

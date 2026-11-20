@@ -38,10 +38,10 @@ function retryDelay(error: unknown, exponentialMs: number): number {
 export function isPermanentError(err: unknown): boolean {
   if (!err) return false;
   const status = (err as any)?.status ?? (err as any)?.statusCode ?? (err as any)?.response?.status;
-  if (status === 400 || status === 401 || status === 403 || status === 404) return true;
+  if (status === 400 || status === 401 || status === 403 || status === 404 || status === 413) return true;
   const message = err instanceof Error ? err.message : String(err);
-  if (/\b(?:400|401|403|404)\b/.test(message)) return true;
-  if (/unauthorized|forbidden|not found/i.test(message) && !/429/i.test(message)) return true;
+  if (/\b(?:400|401|403|404|413)\b/.test(message)) return true;
+  if (/unauthorized|forbidden|not found|too large|payload too large|request too large/i.test(message) && !/429/i.test(message)) return true;
   return false;
 }
 
