@@ -125,3 +125,33 @@ describe('ripgrep combined scans & cancellation', () => {
     expect(r2.items.map((i) => i.reason)).toEqual(r1.items.map((i) => i.reason));
   });
 });
+
+describe('per-request readText and symbol caching', () => {
+  it('reads and parses each file at most once per request, and re-reads fresh content on subsequent requests', async () => {
+    let fileContent = 'def foo():\n  return 1\n';
+    const readCounts = new Map<string, number>();
+    const deps: ContextDeps = {
+      listFiles: async () => ['src/app.py'],
+      searchKeyword: async () => [{ path: 'src/app.py', line: 1, text: 'def foo():' }],
+      searchImporters: async () => [],
+      readText: async (p) => {
+        readCounts.set(p, (readCounts.get(p) ?? 0) + 1);
+        return fileContent;
+      },
+      findSymbol: async (name) => (name === 'foo' ? { name: 'foo', kind: 'function', path: 'src/app.py', line: 1 } : undefined),
+    };
+
+    // Request 1: mentions @file and @symbol and matches keywords
+    const r1 = await assembleContext('check @file:src/app.py and @symbol:foo for foo', deps, 1500);
+    expect(r1.text).toContain('def foo()');
+    expect(readCounts.get('src/app.py')).toBe(1);
+
+    // Modify file content
+    fileContent = 'def bar():\n  return 2\n';
+
+    // Request 2: new request must read fresh content
+    const r2 = await assembleContext('check @file:src/app.py', deps, 1500);
+    expect(r2.text).toContain('def bar()');
+    expect(readCounts.get('src/app.py')).toBe(2);
+  });
+});

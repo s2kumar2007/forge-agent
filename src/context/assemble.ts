@@ -48,6 +48,24 @@ export function windows(hitLines: number[], total: number, pad = 6, maxSlices = 
  */
 export async function assembleContext(request: string, deps: ContextDeps, budget: number, signal?: AbortSignal): Promise<ContextResult> {
   if (signal?.aborted) throw new Error('Operation aborted');
+  const fileTextCache = new Map<string, string | undefined>();
+  const symCache = new Map<string, ReturnType<typeof topLevelSymbols>>();
+
+  const cachedReadText = async (p: string): Promise<string | undefined> => {
+    if (fileTextCache.has(p)) return fileTextCache.get(p);
+    const text = await deps.readText(p);
+    fileTextCache.set(p, text);
+    return text;
+  };
+
+  const cachedTopLevelSymbols = (text: string, p: string) => {
+    let syms = symCache.get(p);
+    if (!syms) {
+      syms = topLevelSymbols(text, p);
+      symCache.set(p, syms);
+    }
+    return syms;
+  };
   const keywords = extractKeywords(request);
   const mentions = parseMentions(request);
   const files = (await deps.listFiles()).filter((f) => SOURCE_RE.test(f));
@@ -57,17 +75,17 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
   // --- 1. explicit mentions ---
   for (const f of mentions.files) {
     if (signal?.aborted) throw new Error('Operation aborted');
-    const text = await deps.readText(f);
+    const text = await cachedReadText(f);
     if (text === undefined) continue;
     const lines = text.split('\n');
-    const sigs = topLevelSymbols(text, f).slice(0, 25).map((s) => `${s.line}: ${s.signature}`).join('\n');
+    const sigs = cachedTopLevelSymbols(text, f).slice(0, 25).map((s) => `${s.line}: ${s.signature}`).join('\n');
     const body = `${slice(lines, 1, 40)}\n...\n[signatures]\n${sigs}`;
     items.push({ label: `${f}:1-${Math.min(40, lines.length)} + signatures`, reason: 'mentioned with @file', text: body, priority: 100 });
   }
   for (const name of mentions.symbols) {
     if (signal?.aborted) throw new Error('Operation aborted');
     const hit = await deps.findSymbol(name);
-    const text = hit ? await deps.readText(hit.path) : undefined;
+    const text = hit ? await cachedReadText(hit.path) : undefined;
     if (!hit || text === undefined) continue;
     const lines = text.split('\n');
     const a = Math.max(1, hit.line - 2), b = Math.min(lines.length, hit.line + 40);
@@ -107,13 +125,11 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
   }
   // Symbol-name matches among the current top candidates.
   const top = [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([f]) => f);
-  const symCache = new Map<string, ReturnType<typeof topLevelSymbols>>();
   for (const f of top) {
     if (signal?.aborted) throw new Error('Operation aborted');
-    const text = await deps.readText(f);
+    const text = await cachedReadText(f);
     if (text === undefined) continue;
-    const syms = topLevelSymbols(text, f);
-    symCache.set(f, syms);
+    const syms = cachedTopLevelSymbols(text, f);
     for (const k of keywords) {
       const m = syms.find((s) => s.name.toLowerCase().includes(k));
       if (m) { bump(f, 4, `defines "${m.name}"`); hitLines.set(f, [...(hitLines.get(f) ?? []), m.line]); }
@@ -142,10 +158,10 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
 
   const ranked = [...score.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 12);
   for (const [f, sc] of ranked) {
-    const text = await deps.readText(f);
+    const text = await cachedReadText(f);
     if (text === undefined) continue;
     const lines = text.split('\n');
-    const syms = symCache.get(f) ?? topLevelSymbols(text, f);
+    const syms = cachedTopLevelSymbols(text, f);
     const reason = [...new Set(why.get(f))].slice(0, 5).join('; ');
     const sigs = syms.slice(0, 25).map((s) => `${s.line}: ${s.signature}`).join('\n');
     if (sigs) items.push({ label: `${f} (signatures)`, reason, text: sigs, priority: 40 + sc });
