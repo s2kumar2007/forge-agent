@@ -179,6 +179,7 @@ Run **Forge: Undo last applied change** to restore the most recently applied For
 
 Native VS Code `Ctrl+Z`/`Cmd+Z` remains available for normal undo behavior.
 
+
 ## Context assembly
 
 Forge Agent automatically selects relevant workspace context before executing a turn in Agent mode:
@@ -191,6 +192,8 @@ Forge Agent automatically selects relevant workspace context before executing a 
    - A budget summary line: `Context: <N> items, <used> of <budget> estimated tokens`
    - Each selected item with its path/slice, estimated token size, and rationale (why it was chosen).
    - Real TrueForge harness events (subagent lifecycle lines like `Subagent search started` and compaction lines like `Context compacted`) and session identity (`Session: <id>`).
+
+
 
 ## Extension settings
 
