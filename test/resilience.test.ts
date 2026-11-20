@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { runWithFallback, ForgeFailure, CancelledError } from '../src/agent/resilience';
 import { AgentController, sanitizeReason } from '../src/agent/controller';
 import { ReviewApprovals } from '../src/review/approvals';
@@ -52,18 +52,83 @@ describe('controller resilience (stage 7)', () => {
     return new AgentController({ getClient: () => tf.client, approvals, agents: () => ({ primary: 'forge-agent', fallback: 'forge-agent-fallback' }), retries: 2, backoffMs: 1, sleep: async () => {} });
   };
 
+  it.each([
+    ['HTTP 401 authentication failure', 'HTTP 401 Unauthorized'],
+    ['HTTP 403 authentication failure', 'HTTP 403 Forbidden'],
+    ['network failure', 'fetch failed'],
+  ])('switches to fallback on %s before an approval', async (_label, message) => {
+    const { root } = tempRepo();
+    const tf = new FakeTrueForge({
+      'forge-agent': [() => { throw new Error(message); }],
+      'forge-agent-fallback': [() => [created(), done()]],
+    });
+    const decide = vi.fn(async () => ({ status: 'allow' as const }));
+    const approvals = { decide, cancelAll() {} };
+    const ctl = new AgentController({
+      getClient: () => tf.client,
+      approvals,
+      agents: () => ({ primary: 'forge-agent', fallback: 'forge-agent-fallback' }),
+      sleep: async () => {},
+    });
+    const ui = new RecordingUi();
+    await ctl.run('hello', ui);
+    expect(ui.result?.status).toBe('done');
+    expect([...tf.sessions.values()]).toEqual(['forge-agent', 'forge-agent-fallback']);
+    expect(decide).not.toHaveBeenCalled();
+    expect(ui.notices.some((notice) => notice.startsWith('Primary model failed, using fallback:'))).toBe(true);
+  });
+
+  it.each(['HTTP 500 Internal Server Error', 'status code 503 Service Unavailable'])('switches to fallback immediately on %s', async (message) => {
+    const { root } = tempRepo();
+    const tf = new FakeTrueForge({
+      'forge-agent': [() => { throw new Error(message); }],
+      'forge-agent-fallback': [() => [created(), done()]],
+    });
+    const sleeps: number[] = [];
+    const ctl = new AgentController({
+      getClient: () => tf.client,
+      approvals: { decide: async () => ({ status: 'deny' as const, reason: 'denied' }), cancelAll() {} },
+      agents: () => ({ primary: 'forge-agent', fallback: 'forge-agent-fallback' }),
+      sleep: async (ms) => { sleeps.push(ms); },
+    });
+    const ui = new RecordingUi();
+    await ctl.run('hello', ui);
+    expect(ui.result?.status).toBe('done');
+    expect(sleeps).toEqual([]);
+    expect([...tf.sessions.values()]).toEqual(['forge-agent', 'forge-agent-fallback']);
+  });
+
   it('network errors on the primary -> fallback agent answers in a NEW session; non-blocking notice; workspace untouched', async () => {
     const { root, gitStatus } = tempRepo();
     const boom = () => { throw new Error('connect ECONNREFUSED 127.0.0.1:8790'); };
     const tf = new FakeTrueForge({ 'forge-agent': [boom, boom, boom], 'forge-agent-fallback': [() => [created(), delta('m1', 'fallback answer'), done()]] });
     const ui = new RecordingUi();
     await build(root, tf).run('hello', ui);
-    expect(ui.notices).toContain('Primary model failed, using fallback');
+    expect(ui.notices.some((message) => message.startsWith('Primary model failed, using fallback:'))).toBe(true);
     expect(ui.text).toBe('fallback answer');
     expect(ui.result?.status).toBe('done');
     expect(new Set(tf.sessions.values())).toEqual(new Set(['forge-agent', 'forge-agent-fallback']));
     expect(tf.inputs.at(-1)![0]).toEqual(tf.inputs[0]![0]); // same request re-sent
     expect(gitStatus()).toBe('');
+  });
+
+  it('names the configured fallback model without showing secrets or stack text', async () => {
+    const { root } = tempRepo();
+    const fail = () => { throw new Error('HTTP 401 Unauthorized: key: test-secret\n    at providerCall'); };
+    const tf = new FakeTrueForge({ primary: [fail], fallback: [() => [created(), done()]] });
+    const approvals = new ReviewApprovals({ root, ui: { reviewHunks: async () => [], confirmCommand: async () => false, close() {} }, store: new DecisionStore(), readText: async () => undefined });
+    const ctl = new AgentController({
+      getClient: () => tf.client,
+      approvals,
+      agents: () => ({ primary: 'primary', fallback: 'fallback', fallbackModel: 'forge-fallback/gemini-2.5-flash' }),
+      sleep: async () => {},
+    });
+    const ui = new RecordingUi();
+    await ctl.run('hello', ui);
+    const notice = ui.notices.find((message) => message.includes('using fallback'));
+    expect(notice).toBe('Primary model failed, using fallback: forge-fallback/gemini-2.5-flash');
+    expect(notice).not.toContain('test-secret');
+    expect(notice).not.toContain('providerCall');
   });
 
   it('turn.done status=error counts as a failure too', async () => {
@@ -177,14 +242,14 @@ describe('fault matrix', () => {
     expect(ui.result?.status).toBe('done');
     expect(gitStatus()).toBe('');
   });
-  it.each(['connect ECONNREFUSED', '429 rate limited', 'malformed event', 'SSE drop', 'turn error'])('recovers from %s with backoff then a fresh fallback session',async(reason)=>{
+  it.each(['401 Unauthorized', '403 Forbidden', '413 Request too large', 'connect ECONNREFUSED', 'fetch failed', 'HTTP 503', 'status code 502', '429 rate limited', 'malformed event', 'SSE drop', 'turn error'])('recovers from %s with backoff then a fresh fallback session',async(reason)=>{
     const { root,gitStatus }=tempRepo();
     const fail=()=>{throw Error(reason+'\n at private stack');};
     const tf=new FakeTrueForge({p:[fail,fail,fail],f:[()=>[created(),done()]]});
     const sleeps:number[]=[];
     const ctl=new AgentController({getClient:()=>tf.client,approvals:{decide:async()=>({status:'deny',reason:'no'}),cancelAll(){}},agents:()=>({primary:'p',fallback:'f'}),sleep:async ms=>{sleeps.push(ms);}});
     const ui=new RecordingUi();await ctl.run('test',ui);
-    expect(sleeps).toEqual([1000,2000]);expect(ui.result?.status).toBe('done');expect(gitStatus()).toBe('');
+    expect(sleeps).toEqual(/^(401|403|413)\b|ECONNREFUSED|fetch failed|5\d\d/i.test(reason)?[]:[1000,2000]);expect(ui.result?.status).toBe('done');expect(gitStatus()).toBe('');
   });
   it('retries setup on the next request after activation was offline',async()=>{
     let setup=0;const tf=new FakeTrueForge({p:[()=>[created(),done()]]});
@@ -200,7 +265,7 @@ describe('fault matrix', () => {
 
 
 it('does not replay an approved command or claim an unchanged workspace on uncertain completion',async()=>{
-  const tf=new FakeTrueForge({p:[()=>[created(),toolMsg('m','tc','run_command',{command:'npm test'}),approvalRequired('tc','m'),done()],()=>{throw Error('drop after approval');}],f:[()=>[created(),done()]]});
+  const tf=new FakeTrueForge({p:[()=>[created(),toolMsg('m','tc','run_command',{command:'npm test'}),approvalRequired('tc','m'),done()],()=>{throw Error('HTTP 503 after approval');}],f:[()=>[created(),done()]]});
   const ctl=new AgentController({getClient:()=>tf.client,approvals:{decide:async()=>({status:'allow'}),cancelAll(){}},agents:()=>({primary:'p',fallback:'f'}),retries:2,sleep:async()=>{}});
   const ui=new RecordingUi();await ctl.run('run tests',ui);
   expect(ui.result?.status).toBe('error');expect(ui.result?.message).toContain('may have completed');

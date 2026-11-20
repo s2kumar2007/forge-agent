@@ -3,10 +3,25 @@ import { describeToolCall, runTurn, toolName } from '../forge/turnRunner';
 import type { AgentUi, ApprovalHandler } from './types';
 import { CancelledError, ForgeFailure, runWithFallback } from './resilience';
 
+function isAuthenticationFailure(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b(?:HTTP\s*)?(?:401|403)\b|\bstatus(?:\s+code)?\s*[:=]?\s*(?:401|403)\b/i.test(message);
+}
+
+function isNetworkFailure(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT)\b|fetch failed|failed to fetch|network(?: error| failure|error)|socket hang up|connection (?:refused|reset|timed out)|timed out/i.test(message);
+}
+
+function isServerFailure(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b(?:HTTP\s*)?5\d\d\b|\bstatus(?:\s+code)?\s*[:=]?\s*5\d\d\b/i.test(message);
+}
+
 export interface ControllerDeps {
   getClient: () => TrueForge;
   approvals: ApprovalHandler;
-  agents: () => { primary: string; fallback?: string };
+  agents: () => { primary: string; fallback?: string; fallbackModel?: string };
   retries?: number;
   backoffMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -23,8 +38,9 @@ export function sanitizeReason(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   let firstLine = raw.split(/[\r\n]+/)[0]?.trim() || 'unknown error';
   firstLine = firstLine
-    .replace(/(?:Bearer\s+|token\s+|key[:=]\s*)[a-zA-Z0-9_\-\.]+/gi, '[REDACTED]')
+    .replace(/(?:Bearer\s+|(?:api[-_ ]?)?token\s*[:=]?\s*|key\s*[:=]\s*)[a-zA-Z0-9_\-\.]+/gi, '[REDACTED]')
     .replace(/authorization:\s*[^\s]+/gi, 'authorization: [REDACTED]')
+    .replace(/\b(?:sk-|gsk_|AIza)[A-Za-z0-9_-]{12,}\b/g, '[REDACTED]')
     .trim();
   if (firstLine.length > 120) {
     firstLine = firstLine.slice(0, 117) + '...';
@@ -81,19 +97,23 @@ export class AgentController {
         sleep: this.d.sleep ?? ((ms) => sleepForRetry(ms, this.abort.signal)),
         isCancelled: () => this.cancelled,
         canRetry: () => this.approvedOperations === 0,
+        shouldFallbackImmediately: (err) => isAuthenticationFailure(err) || isNetworkFailure(err) || isServerFailure(err),
         attempt: (agent) => this.attempt(agent, request, ui, rebuildRequest, () => ++clientToolResponses),
         onRetry: (agent, n, err) => {
           this.d.logError?.(err);
           const reason = sanitizeReason(err);
           ui.notice(`Request to "${agent}" failed (${reason}), retrying (${n})...`);
         },
-        onFallback: () => ui.notice('Primary model failed, using fallback'),
+        onFallback: () => {
+          const model = sanitizeReason(new Error(cfg.fallbackModel ?? cfg.fallback ?? 'fallback'));
+          ui.notice(`Primary model failed, using fallback: ${model}`);
+        },
       });
       ui.finished(outcome === 'cancelled' ? this.cancelInfo() : { status: 'done' });
     } catch (e) {
       if (e instanceof CancelledError) ui.finished(this.cancelInfo());
       else {
-        const base = e instanceof ForgeFailure ? e.message : `Forge could not complete the request (${e instanceof Error ? e.message.split('\n')[0] : 'unknown error'}).`;
+        const base = e instanceof ForgeFailure ? e.message : `Forge could not complete the request (${sanitizeReason(e)}).`;
         ui.finished({ status: 'error', message: `${base} ${this.approvedOperations ? `${this.approvedOperations} approved operation(s) may have completed; inspect the workspace and use "Forge: Undo last applied change" to revert.` : 'No changes were made to your workspace.'}` });
       }
     } finally {

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { getConfig } from './config';
 import { startEditorMcpServer, type EditorMcpServer } from './mcp/server';
 import { createClient, registerMcpServer } from './forge/client';
-import { loadAgentFiles, syncAgents } from './forge/agents';
+import { getAgentModel, loadAgentFiles, syncAgents } from './forge/agents';
 import { ChatPanel } from './panel/ChatPanel';
 import { registerEditorTools } from './mcp/tools';
 import { findRg, VsCodeEditorApi } from './workspace/vscodeApi';
@@ -32,12 +32,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     readText: (abs) => api?.readText(abs) ?? Promise.resolve(undefined),
   });
   let readyUrl: string | undefined;
+  let fallbackModel: string | undefined;
   let preparing: Promise<void> | undefined;
   const ensureReady = (): Promise<void> => {
     const url = getConfig().baseUrl;
     if (readyUrl === url) return Promise.resolve();
     if (preparing) return preparing;
-    preparing = bootstrap(ctx, api).then(() => { readyUrl = url; }).finally(() => { preparing = undefined; });
+    preparing = bootstrap(ctx, api).then((model) => { readyUrl = url; fallbackModel = model; }).finally(() => { preparing = undefined; });
     return preparing;
   };
   const outputChannel = vscode.window.createOutputChannel('Forge');
@@ -47,7 +48,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     prepare: ensureReady,
     getClient: () => createClient(getConfig().baseUrl),
     approvals,
-    agents: () => ({ primary: getConfig().agentName, fallback: getConfig().fallbackAgentName }),
+    agents: () => ({ primary: getConfig().agentName, fallback: getConfig().fallbackAgentName, fallbackModel }),
     onRunStart: () => api?.beginRun(),
     onCancel: () => { store.clear(); api?.cancelCommands(); },
     logError: (err) => { outputChannel.appendLine(err instanceof Error ? (err.stack ?? err.message) : String(err)); },
@@ -63,7 +64,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   if (api) void ensureReady().catch(() => { void vscode.window.showWarningMessage('Forge: TrueForge is not reachable or setup failed. Start it and configure the models; Forge retries when you send a request.'); });
 }
 
-async function bootstrap(ctx: vscode.ExtensionContext, api: VsCodeEditorApi | undefined): Promise<void> {
+async function bootstrap(ctx: vscode.ExtensionContext, api: VsCodeEditorApi | undefined): Promise<string | undefined> {
   if (!api) throw new Error('Open a workspace folder first.');
   mcp ??= await startEditorMcpServer((server) => registerEditorTools(server, api));
   const client = createClient(getConfig().baseUrl);
@@ -74,6 +75,7 @@ async function bootstrap(ctx: vscode.ExtensionContext, api: VsCodeEditorApi | un
     const details = failed.map((f) => `${f.name}: ${f.error ?? 'unknown error'}`).join('; ');
     throw new Error(`Configure the required models in TrueForge before running Forge. Failed to sync: ${details}`);
   }
+  return getAgentModel(client, getConfig().fallbackAgentName);
 }
 
 export async function deactivate(): Promise<void> { await mcp?.dispose(); }

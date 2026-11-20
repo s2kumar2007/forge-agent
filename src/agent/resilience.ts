@@ -13,6 +13,7 @@ export interface FallbackOptions<T> {
   attempt: (agent: string) => Promise<T>;
   isCancelled: () => boolean;
   canRetry?: () => boolean;
+  shouldFallbackImmediately?: (err: unknown) => boolean;
   onRetry?: (agent: string, retryNo: number, err: unknown) => void;
   onFallback?: (err: unknown) => void;
 }
@@ -20,7 +21,12 @@ export interface FallbackOptions<T> {
 /** Short, stack-free reason for the one error message the user sees. */
 export function briefReason(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
-  return raw.split('\n')[0]!.replace(/\s+/g, ' ').slice(0, 160);
+  return raw.split('\n')[0]!
+    .replace(/\s+/g, ' ')
+    .replace(/(?:Bearer\s+|(?:api[-_ ]?)?token\s*[:=]?\s*|key\s*[:=]\s*)[a-zA-Z0-9_\-\.]+/gi, '[REDACTED]')
+    .replace(/authorization:\s*[^\s]+/gi, 'authorization: [REDACTED]')
+    .replace(/\b(?:sk-|gsk_|AIza)[A-Za-z0-9_-]{12,}\b/g, '[REDACTED]')
+    .slice(0, 160);
 }
 
 /** Quota retry hints can arrive in turn.done text rather than HTTP headers. */
@@ -68,6 +74,7 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
         lastErr = e;
         if (o.isCancelled()) throw new CancelledError();
         if (o.canRetry && !o.canRetry()) throw new ForgeFailure('The run stopped after an approved operation; automatic replay was skipped.');
+        if (a === 0 && o.shouldFallbackImmediately?.(e)) break;
 
         if (a === 0 && i > 0) primaryRetried = true;
 
@@ -77,7 +84,6 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
         }
 
         if (i < maxRetries) {
-          if (a === 0) primaryRetried = true;
           o.onRetry?.(agent, i + 1, e);
           await o.sleep(retryDelay(e, o.backoffMs * 2 ** i));
         }

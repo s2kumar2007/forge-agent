@@ -14,7 +14,21 @@
           "model_id": "openai/gpt-oss-120b"
         }
       ]
+    },
+    {
+      "type": "custom",
+      "name": "forge-fallback",
+      "base_url": "https://api.example.com/v1",
+      "auth": {
+        "api_key": "<optional-placeholder-only>"
+      },
+      "models": [
+        {
+          "name": "<model-name>",
+          "model_id": "<model-id>"
+        }
+      ]
     }
   ],
-  "credentialSetup": "Run scripts/configure-groq.ps1 locally. Credentials are stored by TrueForge, not in this file."
+  "credentialSetup": "Run scripts/configure-groq.ps1 locally. For an optional second provider, set FALLBACK_BASE_URL and FALLBACK_MODEL, optionally set FALLBACK_API_KEY, then run node scripts/configure-fallback.cjs. Credentials are stored by TrueForge, not in this file."
 }

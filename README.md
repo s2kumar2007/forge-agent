@@ -2,7 +2,7 @@
 
 Forge Agent is a VS Code extension that turns **TrueForge agent sessions** into a reviewed, workspace-aware coding workflow. It provides local MCP editor tools, explicit diff approval, command confirmation, and undo support.
 
-**Current model configuration:** Primary and Inline agents use Groq (groq/gpt-oss-120b), Fallback uses Google Gemini (google-gemini/gemini-3-5-flash).
+**Current model configuration:** Primary and Inline agents use Groq (`groq/gpt-oss-120b`), while the fallback agent uses Google Gemini (`google-gemini/gemini-3-5-flash`). The opt-in fallback setup can configure a second OpenAI-compatible provider.
 
 ## Features
 
@@ -12,7 +12,7 @@ Forge Agent is a VS Code extension that turns **TrueForge agent sessions** into 
 - Per-hunk Accept/Reject controls
 - Explicit approval for shell commands
 - Undo for accepted Forge edits
-- Groq-only provider configuration
+- Groq default with an opt-in OpenAI-compatible fallback provider
 - MCP loopback communication with bearer authentication
 - Automatic setup retry and bounded fallback handling
 
@@ -108,7 +108,7 @@ The extension registers the local `forge-editor` MCP server, authenticates that 
 
 ## Groq model configuration
 
-All roles use the same Groq model:
+Without the opt-in fallback setup, all roles use the same Groq model:
 
 | Role | TrueForge agent | Groq model ID |
 |---|---|---|
@@ -123,6 +123,22 @@ http://127.0.0.1:8791/v1
 ```
 
 `config.example.json` is a configuration checklist, not an importable TrueForge manifest.
+
+## Optional second-provider fallback
+
+The committed agent manifests remain unchanged and use Groq by default. To configure a second OpenAI-compatible endpoint for the fallback agent, start TrueForge and set these environment variables in the shell that runs the helper:
+
+```powershell
+$env:FALLBACK_BASE_URL = 'https://api.example.com/v1'
+$env:FALLBACK_MODEL = '<model-id>'
+# Set only when the endpoint requires a key:
+$env:FALLBACK_API_KEY = '<your-key>'
+node .\scripts\configure-fallback.cjs
+```
+
+Omit `FALLBACK_API_KEY` for endpoints that do not require authentication. On macOS/Linux, export the same variables and run `node scripts/configure-fallback.cjs`. The helper accepts an optional TrueForge URL as its first argument; it sends configuration only to a loopback TrueForge server and never prints or writes the key to this repository or VS Code settings. TrueForge stores the credential in its local provider configuration.
+
+The helper registers the provider as `forge-fallback` and selects `forge-fallback/<FALLBACK_MODEL>` for the local `forge-agent-fallback` agent. On startup, Forge synchronizes the committed agent settings but preserves this explicitly selected model namespace, so the choice survives extension reloads without changing `agents/*.json`. The primary and inline agents remain on Groq. To return to the default fallback, change the local fallback agent model in TrueForge to `groq/gpt-oss-120b`; the next sync will then use the committed default.
 
 ## Usage
 
