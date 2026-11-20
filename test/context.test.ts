@@ -1,9 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
+import { describe, it, expect, vi } from 'vitest';
 import { estimateTokens, packContext } from '../src/context/budget';
 import { assembleContext, windows, type ContextDeps } from '../src/context/assemble';
 import { extractKeywords, parseMentions } from '../src/context/keywords';
 import { topLevelSymbols } from '../src/context/symbols';
 import { runRg } from '../src/workspace/ripgrep';
+
+vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
 
 describe('packContext (token budget)', () => {
   const item = (label: string, chars: number, priority: number) => ({ label, reason: 'r', text: ('x'.repeat(39) + '\n').repeat(chars / 40), priority });
@@ -93,9 +97,22 @@ describe('ripgrep combined scans & cancellation', () => {
 
   it('kills ripgrep child process when aborted mid-flight', async () => {
     const ac = new AbortController();
-    const p = runRg('node', process.cwd(), ['-e', 'setTimeout(() => {}, 10000)'], 15000, ac.signal);
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = vi.fn(() => {
+      setImmediate(() => child.emit('close', null));
+      return true;
+    });
+    vi.mocked(spawn).mockReturnValueOnce(child as never);
+    const p = runRg('rg-test', process.cwd(), ['.'], 15000, ac.signal);
     setTimeout(() => ac.abort(), 20);
     await expect(p).rejects.toThrow('Operation aborted');
+    expect(child.kill).toHaveBeenCalled();
   });
 
   it('assembleContext stops immediately on aborted signal', async () => {
