@@ -16,15 +16,15 @@ function normalizeRequest(body,maxOutputTokens){
     const {reasoning_content,reasoning,...rest}=message;
     return rest;
    }
-   if(message.role==='tool'&&typeof message.content==='string'&&message.content.length>500){
-    return {...message,content:message.content.slice(0,250)+'\n...[truncated]...\n'+message.content.slice(-200)};
+   if(message.role==='tool'&&typeof message.content==='string'&&message.content.length>1000){
+    return {...message,content:message.content.slice(0,400)+'\n...[truncated]...\n'+message.content.slice(-300)};
    }
    return message;
   });
-  if(msgs.length>4){
-   let start=msgs.length-2;
-   while(start>1&&msgs[start]?.role!=='user')start--;
-   msgs=[msgs[0],...msgs.slice(start)];
+  if(msgs.length>20){
+   let start=msgs.length-12;
+   while(start>2&&msgs[start]?.role!=='assistant')start--;
+   msgs=[msgs[0],msgs[1],...msgs.slice(start)];
   }
   result.messages=msgs;
  }
