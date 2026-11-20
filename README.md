@@ -207,6 +207,17 @@ Forge Agent automatically selects relevant workspace context before executing a 
 
 The context budget is estimated from characters (`characters / 4`). It is not an exact provider tokenizer limit.
 
+## Performance tuning
+
+The extension incorporates latency optimizations without weakening safety:
+
+- **Context assembly scans**: Ripgrep literal keyword searches and module importer queries are combined into single alternated executions rather than spawning separate processes per keyword, preserving ranking inputs and cancellation responsiveness.
+- **Per-request read cache**: File contents and top-level symbol parses are cached in memory for the duration of a single `assembleContext` run and discarded at turn completion, preventing duplicate disk reads and regex AST parses without retaining stale data across requests.
+- **Lower default context budget**: Default `forge.contextBudget` is set to `2000` tokens (down from 6000), reducing initial prompt token payloads while keeping `forge.fallbackContextBudget` at `1500`.
+- **Fast retry and fail-fast resilience**: Permanent HTTP errors (401, 403, 400, 404) fail fast without retrying on the primary model, immediately falling back. Quota (429) wait hints are bounded to 12s (capped from 60s), adapter retries are capped at 2 attempts, and double-retry stacking across primary and fallback models is eliminated, dropping worst-case retry latency to ~20–30s.
+- **Tuned fallback agent**: Fallback agent reasoning effort is set to `low` and `max_tokens` is capped at `10000`, speeding up recovery turns.
+- **Safety rules unchanged**: MCP tool names (`read_file`, `list_dir`, `search_workspace`, `propose_write`, `run_command`), approval flows, serialized writes/commands, and per-hunk diff review remain strictly intact.
+
 ## Groq compatibility behavior
 
 TrueForge 0.182.0 compatibility is handled through `scripts/groq-adapter.cjs`. The adapter:
