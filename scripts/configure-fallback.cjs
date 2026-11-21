@@ -97,9 +97,9 @@ module.exports = { configureFallback };
 if (require.main === module) {
   configureFallback({
     baseUrl: process.argv[2] || 'http://localhost:8790',
-    providerBaseUrl: process.env.FALLBACK_BASE_URL,
+    providerBaseUrl: process.env.FALLBACK_BASE_URL || 'https://integrate.api.nvidia.com/v1',
     apiKey: process.env.FALLBACK_API_KEY,
-    model: process.env.FALLBACK_MODEL,
+    model: process.env.FALLBACK_MODEL || 'mistralai/mistral-large-4-1t-a52b',
   }).then(console.log).catch((error) => {
     console.error(error instanceof Error ? error.message.split(/[\r\n]/)[0] : 'Fallback provider setup failed.');
     process.exitCode = 1;

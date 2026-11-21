@@ -88,7 +88,7 @@ it('requires an API key when configuring NVIDIA NIM as fallback provider', async
   const fetchImpl = vi.fn();
   await expect(configureFallback({
     providerBaseUrl: 'https://integrate.api.nvidia.com/v1',
-    model: 'meta/llama-3.3-70b-instruct',
+    model: 'mistralai/mistral-large-4-1t-a52b',
     fetchImpl,
   })).rejects.toThrow('FALLBACK_API_KEY is required for NVIDIA NIM');
   expect(fetchImpl).not.toHaveBeenCalled();
@@ -103,12 +103,12 @@ it('configures NVIDIA NIM as fallback provider using fake credentials without ex
 
   const result = await configureFallback({
     providerBaseUrl: 'https://integrate.api.nvidia.com/v1',
-    model: 'meta/llama-3.3-70b-instruct',
+    model: 'mistralai/mistral-large-4-1t-a52b',
     apiKey: 'nvapi-fake-test-key-12345',
     fetchImpl,
   });
 
-  expect(result).toBe('Registered provider forge-fallback for model llama-3-3-70b-instruct.');
+  expect(result).toBe('Registered provider forge-fallback for model mistral-large-4-1t-a52b.');
   expect(result).not.toContain('nvapi');
 
   // Verify provider payload
@@ -119,21 +119,21 @@ it('configures NVIDIA NIM as fallback provider using fake credentials without ex
     name: 'forge-fallback',
     base_url: 'https://integrate.api.nvidia.com/v1',
     auth: { api_key: 'nvapi-fake-test-key-12345' },
-    models: [{ name: 'llama-3-3-70b-instruct', model_id: 'meta/llama-3.3-70b-instruct' }],
+    models: [{ name: 'mistral-large-4-1t-a52b', model_id: 'mistralai/mistral-large-4-1t-a52b' }],
   });
 
   // Verify agent payload
   const agentCall = calls.find((c) => c.url.includes('/api/v1/agents') && (c.method === 'POST' || c.method === 'PUT'))!;
   const agentBody = JSON.parse(agentCall.body!);
   expect(agentBody.name).toBe('forge-agent-fallback');
-  expect(agentBody.manifest.model.name).toBe('forge-fallback/llama-3-3-70b-instruct');
+  expect(agentBody.manifest.model.name).toBe('forge-fallback/mistral-large-4-1t-a52b');
 });
 
 it('reads FALLBACK_BASE_URL, FALLBACK_MODEL and FALLBACK_API_KEY from environment', async () => {
   const origEnv = { ...process.env };
   try {
     process.env.FALLBACK_BASE_URL = 'https://integrate.api.nvidia.com/v1';
-    process.env.FALLBACK_MODEL = 'meta/llama-3.3-70b-instruct';
+    process.env.FALLBACK_MODEL = 'mistralai/mistral-large-4-1t-a52b';
     process.env.FALLBACK_API_KEY = 'nvapi-env-fake-key';
 
     const calls: { url: string; method?: string; body?: string }[] = [];
@@ -148,7 +148,7 @@ it('reads FALLBACK_BASE_URL, FALLBACK_MODEL and FALLBACK_API_KEY from environmen
     const providerBody = JSON.parse(providerCall.body!);
     expect(providerBody.manifest.base_url).toBe('https://integrate.api.nvidia.com/v1');
     expect(providerBody.manifest.auth).toEqual({ api_key: 'nvapi-env-fake-key' });
-    expect(providerBody.manifest.models[0].name).toBe('llama-3-3-70b-instruct');
+    expect(providerBody.manifest.models[0].name).toBe('mistral-large-4-1t-a52b');
   } finally {
     process.env = origEnv;
   }

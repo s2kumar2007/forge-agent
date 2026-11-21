@@ -3,7 +3,7 @@
   "description": "Forge fallback coding agent using NVIDIA NIM when the primary Gemini model fails.",
   "manifest": {
     "model": {
-      "name": "forge-fallback/llama-3-3-70b-instruct",
+      "name": "forge-fallback/mistral-large-4-1t-a52b",
       "params": {
         "temperature": 0.2,
         "parallel_tool_calls": false,

@@ -18,7 +18,7 @@ This script guides the official demonstration video and local reproduction again
    ```
 3. Configure model providers locally without committing credentials:
    - In TrueForge (`http://localhost:8790`), configure the primary provider `google-gemini` with your Gemini API key.
-   - Configure the fallback provider `forge-fallback` (NVIDIA NIM with `meta/llama-3.3-70b-instruct`):
+   - Configure the fallback provider `forge-fallback` (NVIDIA NIM with `mistralai/mistral-large-4-1t-a52b`):
      - Windows PowerShell: `$env:FALLBACK_API_KEY="<your-key>"; node scripts/configure-fallback.cjs`
      - macOS/Linux: `FALLBACK_API_KEY="<your-key>" node scripts/configure-fallback.cjs`
 4. Clone Flask repository and checkout tag 3.1.3:

@@ -26,8 +26,8 @@
       },
       "models": [
         {
-          "name": "llama-3-3-70b-instruct",
-          "model_id": "meta/llama-3.3-70b-instruct"
+          "name": "mistral-large-4-1t-a52b",
+          "model_id": "mistralai/mistral-large-4-1t-a52b"
         }
       ]
     },
@@ -43,5 +43,5 @@
       ]
     }
   ],
-  "credentialSetup": "Configure Google Gemini provider in TrueForge for the primary and inline models. For the fallback provider (NVIDIA NIM), set FALLBACK_BASE_URL (https://integrate.api.nvidia.com/v1), FALLBACK_MODEL (e.g. meta/llama-3.3-70b-instruct) and FALLBACK_API_KEY, then run node scripts/configure-fallback.cjs. Groq is optional. Credentials are stored by TrueForge, not in this file."
+  "credentialSetup": "Configure Google Gemini provider in TrueForge for the primary and inline models. For the fallback provider (NVIDIA NIM), set FALLBACK_BASE_URL (https://integrate.api.nvidia.com/v1), FALLBACK_MODEL (e.g. mistralai/mistral-large-4-1t-a52b) and FALLBACK_API_KEY, then run node scripts/configure-fallback.cjs. Groq is optional. Credentials are stored by TrueForge, not in this file."
 }
