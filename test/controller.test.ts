@@ -178,3 +178,57 @@ describe('fallback message rebuilding with smaller context budget', () => {
     expect(tf.inputs.at(-1)![0].content).toBe('rebuilt for fallback');
   });
 });
+
+describe('read-only tool call exploration reminder', () => {
+  it('emits a gentle reminder notice at 8 read-only tool calls without hard-stopping', async () => {
+    const { approvals } = setup([]);
+    const readCalls = Array.from({ length: 8 }, (_, i) =>
+      toolMsg(`m${i}`, `tc${i}`, 'read_file', { path: `file${i}.txt` }),
+    );
+    const tf = new FakeTrueForge({
+      p: [
+        () => [created(), ...readCalls, delta('m_end', 'Finished reading without edits.'), done()],
+      ],
+    });
+    const ctl = new AgentController({
+      getClient: () => tf.client,
+      approvals,
+      agents: () => ({ primary: 'p' }),
+      retries: 0,
+    });
+    const ui = new RecordingUi();
+    await ctl.run('explore repo', ui);
+
+    expect(ui.result?.status).toBe('done');
+    expect(ui.tools).toHaveLength(8);
+    expect(ui.notices).toContain(
+      'Gentle reminder: 8 read-only tool calls reached. Please list target files and proceed to propose_write.',
+    );
+  });
+
+  it('does not emit a reminder notice when read-only calls are fewer than 8', async () => {
+    const { approvals } = setup([]);
+    const readCalls = Array.from({ length: 7 }, (_, i) =>
+      toolMsg(`m${i}`, `tc${i}`, 'search_workspace', { query: `term${i}` }),
+    );
+    const tf = new FakeTrueForge({
+      p: [
+        () => [created(), ...readCalls, delta('m_end', 'Done searching.'), done()],
+      ],
+    });
+    const ctl = new AgentController({
+      getClient: () => tf.client,
+      approvals,
+      agents: () => ({ primary: 'p' }),
+      retries: 0,
+    });
+    const ui = new RecordingUi();
+    await ctl.run('search repo', ui);
+
+    expect(ui.result?.status).toBe('done');
+    expect(ui.tools).toHaveLength(7);
+    expect(
+      ui.notices.some((n) => n.includes('8 read-only tool calls reached')),
+    ).toBe(false);
+  });
+});

@@ -227,14 +227,25 @@ export class AgentController {
     let input: TrueForgeApi.TurnInputItem[] = [{ type: 'user.message', content: messageContent }];
     let hadToolCalls = false;
     let hadProposeWrite = false;
+    let readOnlyToolCalls = 0;
+    let readOnlyReminderEmitted = false;
 
     for (let round = 0; round < 200; round++) {
+      let turnReadOnlyCalls = 0;
       const res = await runTurn(client, sid, input, {
         onTextDelta: (id, t) => ui.textDelta(id, t),
         onEventLine: (line) => ui.eventLine?.(line),
         onToolCall: (n) => {
           hadToolCalls = true;
           if (n === 'propose_write') hadProposeWrite = true;
+          if (!isMutatingTool(n)) {
+            turnReadOnlyCalls++;
+            readOnlyToolCalls++;
+            if ((turnReadOnlyCalls === 8 || readOnlyToolCalls === 8) && !readOnlyReminderEmitted) {
+              readOnlyReminderEmitted = true;
+              ui.notice('Gentle reminder: 8 read-only tool calls reached. Please list target files and proceed to propose_write.');
+            }
+          }
           ui.toolCall(n);
         },
       }, this.abort.signal);
