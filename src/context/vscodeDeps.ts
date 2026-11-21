@@ -8,16 +8,24 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Real workspace access for the context assembler. The file list (repo map input) is cached and invalidated by a watcher. */
 export class WorkspaceContextDeps implements ContextDeps {
-  private files: string[] | undefined;
-
   constructor(private api: VsCodeEditorApi, private rgPath: string, private root: string) {
-    const w = vscode.workspace.createFileSystemWatcher('**/*');
-    const reset = () => { this.files = undefined; };
-    w.onDidCreate(reset); w.onDidDelete(reset);
+    const cache = this.api.cache;
+    const w = vscode.workspace.createFileSystemWatcher?.('**/*');
+    if (w) {
+      const reset = () => { cache.invalidateFilesList(); };
+      w.onDidCreate?.((uri) => { reset(); cache.invalidatePath(uri.fsPath); });
+      w.onDidDelete?.((uri) => { reset(); cache.invalidatePath(uri.fsPath); });
+      w.onDidChange?.((uri) => { cache.invalidatePath(uri.fsPath); });
+    }
+    vscode.workspace.onDidChangeTextDocument?.((e) => {
+      cache.invalidatePath(e.document.uri.fsPath);
+    });
   }
 
   async listFiles(): Promise<string[]> {
-    return (this.files ??= (await rgFiles(this.rgPath, this.root)).filter((f) => !isSecretPath(f)));
+    return this.api.cache.getOrListFiles(async () => {
+      return (await rgFiles(this.rgPath, this.root)).filter((f) => !isSecretPath(f));
+    });
   }
   async searchKeyword(k: string) {
     return (await rgText(this.rgPath, this.root, k, 5)).filter((h) => !isSecretPath(h.path));

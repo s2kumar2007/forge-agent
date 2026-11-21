@@ -9,6 +9,7 @@ import { resolveInside, resolveInsideReal, toRel, isSecretPath } from './paths';
 import { DecisionStore, proposalKey } from '../review/decisions';
 import { applyHunks } from '../review/hunks';
 import { UndoStack, hashContent } from '../review/undo';
+import { WorkspaceCache } from './cache';
 
 /** Finds a ripgrep binary: our own dependency first, then VS Code's bundled one, then PATH. */
 export function findRg(extPath: string): string {
@@ -35,16 +36,19 @@ export class VsCodeEditorApi implements EditorApi {
     private rgPath: string,
     readonly decisions: DecisionStore,
     readonly undo: UndoStack,
+    readonly cache: WorkspaceCache = new WorkspaceCache(rootDir),
   ) {}
 
   root(): string { return this.rootDir; }
 
   async readText(abs: string): Promise<string | undefined> {
     if (isSecretPath(toRel(this.rootDir, abs))) return undefined;
-    try {
-      // openTextDocument returns unsaved edits too, so the agent sees what the user sees.
-      return (await vscode.workspace.openTextDocument(vscode.Uri.file(abs))).getText();
-    } catch { return undefined; }
+    return this.cache.getOrReadText(abs, async (target) => {
+      try {
+        // openTextDocument returns unsaved edits too, so the agent sees what the user sees.
+        return (await vscode.workspace.openTextDocument(vscode.Uri.file(target))).getText();
+      } catch { return undefined; }
+    });
   }
 
   async listDir(abs: string): Promise<DirEntry[]> {
@@ -101,6 +105,7 @@ export class VsCodeEditorApi implements EditorApi {
     if (signal.aborted || (doc && doc.getText() !== decision.baseText)) return 'REFUSED: cancelled or file changed during review.';
     edit.replace(uri, range, merged);
     if (!(await vscode.workspace.applyEdit(edit))) return 'ERROR: VS Code refused the edit; nothing was written.';
+    this.cache.invalidatePath(abs);
     this.undo.push({ path: abs, before: decision.baseText, after: merged, label: toRel(this.rootDir, abs), created: !exists });
     if (!(await (await vscode.workspace.openTextDocument(uri)).save())) return 'ERROR: reviewed edit applied in the editor but could not be saved; use Undo last to revert.';
     return `applied hunks ${accepted.size ? [...accepted].sort((a, b) => a - b).join(',') : 'none'}; rejected ${rejected.length ? rejected.join(',') : 'none'}`;
@@ -121,6 +126,7 @@ export class VsCodeEditorApi implements EditorApi {
     else edit.replace(uri, new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)), e.before);
     if (!(await vscode.workspace.applyEdit(edit))) return 'Cannot undo: VS Code refused the edit.';
     if (!e.created && !(await doc.save())) return 'Cannot save undo; retry after resolving the save error.';
+    this.cache.invalidatePath(e.path);
     this.undo.pop();
     return `Restored ${e.label}.`;
   }
