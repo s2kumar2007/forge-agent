@@ -34,14 +34,14 @@ export function briefReason(err: unknown): string {
 }
 
 /** Quota retry hints can arrive in turn.done text rather than HTTP headers. */
-function retryDelay(error: unknown, exponentialMs: number): number {
+function retryDelay(error: unknown, exponentialMs: number, maxCapMs = 12_000): number {
   const message = error instanceof Error ? error.message : String(error);
-  if (!/\b429\b/.test(message)) return Math.min(12_000, exponentialMs);
+  if (!/\b429\b/.test(message)) return Math.min(maxCapMs, exponentialMs);
   const hint = /(?:retry|try\s+again)\s+in\s+(\d+(?:\.\d+)?)s\b/i.exec(message);
-  if (!hint) return Math.min(12_000, exponentialMs);
+  if (!hint) return Math.min(maxCapMs, exponentialMs);
   const seconds = Number(hint[1]);
-  if (!Number.isFinite(seconds)) return Math.min(12_000, exponentialMs);
-  return Math.max(exponentialMs, Math.min(12_000, Math.ceil(seconds * 1000) + 250));
+  if (!Number.isFinite(seconds)) return Math.min(maxCapMs, exponentialMs);
+  return Math.max(exponentialMs, Math.min(maxCapMs, Math.ceil(seconds * 1000) + 250));
 }
 
 /** Detects HTTP 429 quota / rate limit errors. */
@@ -75,11 +75,14 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
   let primaryErr: unknown;
   let fallbackErr: unknown;
   let primaryRetried = false;
+  let fallbackWaitMs = 0;
+  const MAX_FALLBACK_WAIT_MS = 30_000;
 
   for (let a = 0; a < agents.length; a++) {
     const agent = agents[a]!;
+    const isFallback = a > 0;
     // Avoid double retry stacking: if primary already retried, fallback gets 0 retries
-    const maxRetries = a > 0 && primaryRetried ? 0 : o.retries;
+    const maxRetries = isFallback && primaryRetried ? 0 : o.retries;
 
     for (let i = 0; i <= maxRetries; i++) {
       if (o.isCancelled()) throw new CancelledError();
@@ -101,8 +104,17 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
         }
 
         if (i < maxRetries) {
+          let delay = retryDelay(e, o.backoffMs * 2 ** i, isFallback ? 30_000 : 12_000);
+          if (isFallback) {
+            const remaining = MAX_FALLBACK_WAIT_MS - fallbackWaitMs;
+            if (remaining <= 0) {
+              break;
+            }
+            delay = Math.min(delay, remaining);
+            fallbackWaitMs += delay;
+          }
           o.onRetry?.(agent, i + 1, e);
-          await o.sleep(retryDelay(e, o.backoffMs * 2 ** i));
+          await o.sleep(delay);
         }
       }
     }

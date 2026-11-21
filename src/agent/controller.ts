@@ -18,6 +18,11 @@ function isServerFailure(err: unknown): boolean {
   return /\b(?:HTTP\s*)?5\d\d\b|\bstatus(?:\s+code)?\s*[:=]?\s*5\d\d\b/i.test(message);
 }
 
+function isPayloadTooLarge(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b(?:HTTP\s*)?413\b|\bstatus(?:\s+code)?\s*[:=]?\s*413\b|payload too large|request too large|request entity too large/i.test(message);
+}
+
 export interface ControllerDeps {
   getClient: () => TrueForge;
   approvals: ApprovalHandler;
@@ -98,7 +103,7 @@ export class AgentController {
         sleep: this.d.sleep ?? ((ms) => sleepForRetry(ms, this.abort.signal)),
         isCancelled: () => this.cancelled,
         canRetry: () => this.approvedOperations === 0,
-        shouldFallbackImmediately: (err) => isAuthenticationFailure(err) || isNetworkFailure(err) || isServerFailure(err),
+        shouldFallbackImmediately: (err) => isAuthenticationFailure(err) || isNetworkFailure(err) || isServerFailure(err) || isPayloadTooLarge(err),
         attempt: (agent) => this.attempt(agent, request, ui, rebuildRequest, () => ++clientToolResponses),
         onRetry: (agent, n, err) => {
           this.d.logError?.(err);

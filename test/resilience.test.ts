@@ -323,6 +323,43 @@ it('allows fallback retries when primary failed fast on permanent error', async 
   expect(sleeps).toEqual([1000]);
 });
 
+it('switches to fallback immediately on primary 401 without retrying primary', async () => {
+  const calls: string[] = [];
+  const { o, sleeps } = opts(async (a) => {
+    calls.push(a);
+    if (a === 'p') throw new Error('401 Unauthorized');
+    return 'ok-from-fallback';
+  });
+  const res = await runWithFallback(o);
+  expect(res).toBe('ok-from-fallback');
+  expect(calls).toEqual(['p', 'f']);
+  expect(sleeps).toEqual([]);
+});
+
+it('honors retry hint on fallback capped at 30s total and ends with clear message', async () => {
+  const calls: string[] = [];
+  const { o, sleeps } = opts(async (a) => {
+    calls.push(a);
+    if (a === 'p') throw new Error('401 Unauthorized');
+    throw new Error('429 Quota exceeded: Please retry in 50s.');
+  });
+  const err = await runWithFallback(o).catch((e) => e);
+  expect(err).toBeInstanceOf(ForgeFailure);
+  expect(err.message).toBe('Primary model failed (401 Unauthorized); fallback model failed (429 Quota exceeded: Please retry in 50s.). No files were changed.');
+  expect(calls).toEqual(['p', 'f', 'f']);
+  expect(sleeps).toEqual([30000]);
+});
+
+it('does not switch to fallback if failure happens after an approval has been granted', async () => {
+  const calls: string[] = [];
+  const { o } = opts(async (a) => {
+    calls.push(a);
+    throw new Error('network failure after approval');
+  }, { canRetry: () => false });
+  await expect(runWithFallback(o)).rejects.toThrow('automatic replay was skipped');
+  expect(calls).toEqual(['p']);
+});
+
 describe('quota failure messages (ITEM 2)', () => {
   const build = (root: string, tf: FakeTrueForge) => {
     const approvals = new ReviewApprovals({ root, ui: { reviewHunks: async () => [], confirmCommand: async () => false, close() {} }, store: new DecisionStore(), readText: async () => undefined });
