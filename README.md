@@ -1,31 +1,90 @@
 # Forge Agent
 
-Forge Agent is a VS Code extension that turns **TrueForge agent sessions** into a reviewed, workspace-aware coding workflow. It provides local MCP editor tools, explicit diff approval, command confirmation, and undo support.
+Forge Agent is a VS Code extension that turns **TrueForge agent sessions** into an interactive, reviewed coding workflow. The agent loop runs on a local TrueForge server, which orchestrates the model, subagents, and context compaction, while the editor exposes local workspace capabilities as Model Context Protocol (MCP) tools. The extension provides automated context assembly, per-hunk interactive diff review, explicit command approvals, multi-step undo, and resilient model fallback.
 
-**Current model configuration:** Primary and Inline agents use Groq (`groq/gpt-oss-120b`), while the fallback agent uses Google Gemini (`google-gemini/gemini-3-5-flash`). The opt-in fallback setup can configure a second OpenAI-compatible provider.
+- **Demo video**: [TODO: video link]
+- **Write-up (PDF)**: docs/WRITEUP.pdf
 
-## Features
+## Starting point
 
-- Agent mode with workspace search and context-aware ranked retrieval
-- Inline editing for the selected text
-- Exact or full-file code proposals through a reviewable diff
-- Per-hunk Accept/Reject controls
-- Explicit approval for shell commands
-- Undo for accepted Forge edits
-- Groq default with an opt-in OpenAI-compatible fallback provider
-- MCP loopback communication with bearer authentication
-- Automatic setup retry and bounded fallback handling
+Written from scratch for Round 1 of the Techfest 2026-27 TrueFoundry Forge-a-thon. No upstream fork. Released under the MIT license.
 
-## Requirements
+## Team
 
-- Windows, macOS, or Linux
+**Team name**: Git Push, VIT Vellore
+
+| Member | Role | GitHub |
+|---|---|---|
+| B. Sunil Kumar (Team Leader) | Lead developer of the extension core (TrueForge integration, MCP editor tools, context retrieval, diff review) | [s2kumar2007](https://github.com/s2kumar2007) |
+| Eric Bejoy | Testing, documentation and demo video [TODO: confirm role] | [TODO: GitHub handle] |
+| Ashmit Sharma | Resilience and model fallback code | [TODO: GitHub handle] |
+| Shaurya Singla | Context and TrueForge session visibility code | [TODO: GitHub handle] |
+
+## Architecture summary
+
+The extension integrates VS Code with the TrueForge agent framework through a client-server architecture:
+
+- **TrueForge client**: Connects to the local TrueForge daemon (`@truefoundry/trueforge-sdk` 0.182.0) over HTTP/SSE. The extension starts sessions (`sessions.create`), streams turns (`createTurnStream`), and sends tool approval results in resume turns via `user.tool_approval` messages.
+- **Editor MCP tools**: Hosts a stateless loopback MCP server (`http://127.0.0.1:<port>/mcp`) registered via `PUT /api/v1/settings/mcp-servers` using a randomized bearer token. It exposes five editor tools:
+  - `read_file`: Bounded file reads with line-range limits (max 40 lines per slice, max 80 for whole files) to conserve model context.
+  - `list_dir`: Directory listing with strict workspace path containment.
+  - `search_workspace`: Text and symbol search powered by ripgrep with ranked matches.
+  - `propose_write`: Virtual diff generation for proposed file changes without modifying files on disk.
+  - `run_command`: Shell command execution in the workspace root with timeout and process-tree termination.
+- **Approval-driven per-hunk diff review**: `propose_write` opens an interactive side-by-side diff review panel. Users can accept or reject individual hunks independently. Only accepted hunks are applied atomically via `vscode.workspace.applyEdit`.
+- **Undo**: A custom `forge.undoLast` stack stores up to 50 edits in memory, verifies base text integrity before reverting, restores original line endings (CRLF/LF), and deletes newly created files on undo. Normal VS Code undo (`Ctrl+Z`/`Cmd+Z`) remains fully functional.
+- **Streaming and cancellation**: Model responses stream live into the chat panel. Pressing **Stop** calls `sessions.cancel`, clears review state, aborts pending approvals, and terminates running command process trees.
+
+## Context assembly
+
+Before executing a turn in Agent mode, Forge Agent automatically gathers relevant workspace context:
+
+1. **Explicit mentions**: `@file:path` and `@symbol:name` mentions in the prompt are parsed first and given top priority (capped at 40 lines for files, 25 signatures for symbols).
+2. **Ranked candidate shortlist**: Keywords extracted from the prompt are searched across the repository using ripgrep. Matches are ranked by term frequency, file path relevance, top-level symbol definitions, and module importer relationships (downstream dependencies). Dense hit windows are capped at 40 lines.
+3. **Repo map**: A compact overview of workspace directory structure is budgeted up to 20% of the token allocation.
+4. **Per-request caching**: File contents and symbol AST parses are cached in memory for the duration of a single `assembleContext` run and immediately discarded.
+5. **Token budgeting**: The default context budget is `2000` tokens (`forge.contextBudget`), estimated at ~4 characters per token. For the fallback agent, the budget is `1500` tokens (`forge.fallbackContextBudget`).
+6. **Context used block in the panel**: The chat panel displays a collapsible **Context used** block detailing:
+   - Budget summary: `Context: <N> items, <used> of <budget> estimated tokens`
+   - Per-item path, rationale, and estimated token size
+   - Session identity (`Session: <id>`) and real harness events (subagent lifecycle lines like `Subagent <title> started/finished` and compaction lines like `Context compacted`)
+
+## Model setup
+
+- **Models used**:
+  - Primary agent (`forge-agent`): Groq `openai/gpt-oss-120b` (configured name: `groq/gpt-oss-120b`), temperature 0.2, serialized tool calls (`parallel_tool_calls: false`).
+  - Inline agent (`forge-inline`): Groq `openai/gpt-oss-120b` (configured name: `groq/gpt-oss-120b`), temperature 0.2.
+  - Fallback agent (`forge-agent-fallback`): Google Gemini `google-gemini/gemini-3-5-flash`, temperature 0.2, `reasoning_effort: "low"`, `max_tokens: 10000`.
+- **Where they run**: Models run on Groq and Google cloud APIs. TrueForge and the Groq compatibility adapter (`scripts/groq-adapter.cjs`) run locally on `127.0.0.1`.
+- **Cost**: Groq free tier, approximately INR 0.
+- **How to switch models**:
+  - To change provider models, edit the model fields in `agents/*.json` or update providers in the TrueForge UI (`http://localhost:8790`).
+  - To configure an optional second OpenAI-compatible provider for the fallback agent, set `FALLBACK_BASE_URL` and `FALLBACK_MODEL` (and optionally `FALLBACK_API_KEY`) and run `node scripts/configure-fallback.cjs`. The extension preserves this selection during agent synchronization.
+- **How the fallback works and its real limits**:
+  - If the primary model encounters a permanent error (HTTP 401, 403, 413), it fails fast without retrying and immediately launches the fallback agent in a fresh session.
+  - If the primary encounters transient errors (HTTP 429, 500, 502, 503, network drop), it retries with exponential backoff up to a 12s cap (adapter retries capped at 2 attempts). If failures persist, it transitions to `forge-agent-fallback`.
+  - **Replay guard**: To prevent duplicate side effects, automatic retry and fallback are disabled once a `propose_write` or `run_command` has been approved.
+
+## Performance tuning
+
+The extension incorporates latency and token optimizations without weakening safety:
+
+- **Combined ripgrep scans**: Ripgrep keyword and importer scans run as single alternated executions rather than spawning separate processes per keyword, preserving ranking inputs and cancellation responsiveness.
+- **Per-request read cache**: File contents and symbol definitions are cached during context assembly and cleared at turn completion, avoiding redundant disk I/O.
+- **Lower default context budget**: Default `forge.contextBudget` is set to `2000` tokens (down from 6000), reducing prompt payload size while maintaining retrieval quality.
+- **Fast retry and fail-fast resilience**: Permanent HTTP errors fail fast without retry loops. Quota (429) retry waits are capped at 12s (down from 60s), adapter retries are capped at 2, and double-retry stacking across primary and fallback models is eliminated.
+- **Tuned fallback agent**: Fallback agent parameters are set to `reasoning_effort: "low"` and `max_tokens: 10000`, reducing recovery latency.
+- **Uncompromised safety rules**: MCP tool names (`read_file`, `list_dir`, `search_workspace`, `propose_write`, `run_command`), approval flows, serialized tool calls, and per-hunk diff review remain strictly enforced.
+
+## Setup from a clean clone
+
+### Prerequisites
+
 - Node.js 22.14 or newer
 - VS Code 1.90 or newer
 - Git
+- Python 3 with `pip` and `venv` (for Flask demo verification)
 - A Groq API key
-- Python 3 for the optional Flask demo
-
-## Quick start
 
 ### 1. Install and build
 
@@ -40,250 +99,151 @@ npm run build
 
 ### 2. Start TrueForge
 
-The tested TrueForge and SDK versions are `0.182.0`.
+The extension requires TrueForge version `0.182.0`. Set the outbound host allowlist to permit loopback MCP connections:
 
 **Windows PowerShell**
-
 ```powershell
 $env:OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1"]'
 npx @truefoundry/trueforge@0.182.0
 ```
 
 **macOS/Linux**
-
 ```bash
 OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1"]' npx @truefoundry/trueforge@0.182.0
 ```
 
-TrueForge opens at `http://localhost:8790`. The loopback host allowlist is required for Forge's local MCP editor server.
+TrueForge will start on `http://localhost:8790`.
 
-### 3. Configure Groq
+### 3. Configure Groq without committing a key
 
-On Windows PowerShell, run:
-
+**Windows PowerShell**
 ```powershell
 powershell -NoProfile -File .\scripts\configure-groq.ps1
 ```
+The script securely prompts for `GROQ_API_KEY` without displaying or saving it to disk.
 
-The script prompts for the key without displaying it. On macOS/Linux, set the key in the process environment and run:
-
+**macOS/Linux**
 ```bash
-GROQ_API_KEY="<your-api-key>" node scripts/configure-groq.cjs
+GROQ_API_KEY="<your-groq-api-key>" node scripts/configure-groq.cjs
 ```
 
-The setup helper:
-
-- verifies Groq model access
-- sends the key only to Groq and the loopback TrueForge server
-- starts the local Groq compatibility adapter
-- creates or updates the Groq TrueForge provider
-- synchronizes the committed agent manifests
-- does not write the key into the repository or VS Code settings
-
-The key remains in TrueForge's local provider configuration outside this repository.
-
-> Keep `GROQ_API_KEY` out of files, shell history where possible, and source control.
-
-### 4. Start the compatibility adapter
-
-The adapter is usually started by the setup helper. Restart it manually if TrueForge is restarted after a machine restart:
-
+The script registers the Groq provider in TrueForge and starts the local compatibility adapter on `127.0.0.1:8791`. If TrueForge is restarted, start the adapter with:
 ```bash
 node scripts/groq-adapter.cjs
 ```
 
-It listens only on `127.0.0.1:8791` and forwards requests to Groq using the configured loopback provider.
+### 4. Load agent definitions and launch
 
-### 5. Launch the extension
+Open the repository folder in VS Code and press **F5** to start the Extension Development Host (or run `code --extensionDevelopmentPath=. <workspace-folder>`).
 
-Open this repository in VS Code and press **F5** to start the Extension Development Host.
+The extension synchronizes `agents/*.json` with TrueForge and registers the `forge-editor` MCP server automatically upon activation.
 
-Alternatively:
+## How to run the three fixed tasks against Flask 3.1.3
 
-```bash
-code --new-window --extensionDevelopmentPath="/absolute/path/to/VS-CODE-EXTENSION" "/absolute/path/to/workspace"
-```
-
-The extension registers the local `forge-editor` MCP server, authenticates that registration with TrueForge, and synchronizes `agents/*.json`.
-
-## Groq model configuration
-
-Without the opt-in fallback setup, all roles use the same Groq model:
-
-| Role | TrueForge agent | Groq model ID |
-|---|---|---|
-| Primary | `groq/gpt-oss-120b` | `openai/gpt-oss-120b` |
-| Inline | `groq/gpt-oss-120b` | `openai/gpt-oss-120b` |
-| Fallback | `groq/gpt-oss-120b` | `openai/gpt-oss-120b` |
-
-The provider base URL is:
-
-```text
-http://127.0.0.1:8791/v1
-```
-
-`config.example.json` is a configuration checklist, not an importable TrueForge manifest.
-
-## Optional second-provider fallback
-
-The committed agent manifests remain unchanged and use Groq by default. To configure a second OpenAI-compatible endpoint for the fallback agent, start TrueForge and set these environment variables in the shell that runs the helper:
-
-```powershell
-$env:FALLBACK_BASE_URL = 'https://api.example.com/v1'
-$env:FALLBACK_MODEL = '<model-id>'
-# Set only when the endpoint requires a key:
-$env:FALLBACK_API_KEY = '<your-key>'
-node .\scripts\configure-fallback.cjs
-```
-
-Omit `FALLBACK_API_KEY` for endpoints that do not require authentication. On macOS/Linux, export the same variables and run `node scripts/configure-fallback.cjs`. The helper accepts an optional TrueForge URL as its first argument; it sends configuration only to a loopback TrueForge server and never prints or writes the key to this repository or VS Code settings. TrueForge stores the credential in its local provider configuration.
-
-The helper registers the provider as `forge-fallback` and selects `forge-fallback/<FALLBACK_MODEL>` for the local `forge-agent-fallback` agent. On startup, Forge synchronizes the committed agent settings but preserves this explicitly selected model namespace, so the choice survives extension reloads without changing `agents/*.json`. The primary and inline agents remain on Groq. To return to the default fallback, change the local fallback agent model in TrueForge to `groq/gpt-oss-120b`; the next sync will then use the committed default.
-
-## Usage
-
-### Agent mode
-
-Run **Forge: Open Agent Panel** from the Command Palette.
-
-- Searches the workspace and collects ranked context
-- Reads bounded file slices and symbols
-- Creates exact edit proposals or complete files
-- Opens proposals for review before changing the workspace
-
-You can add context directly with `@file:path` or `@symbol:name`.
-
-### Inline edit
-
-Select text, then run **Forge: Inline Edit Selection**:
-
-- macOS: `Cmd+K`, `Cmd+I`
-- Windows/Linux: `Ctrl+K`, `Ctrl+I`
-
-The inline agent is limited to the selected edit and supports one reviewed proposal.
-
-### Review and apply
-
-`propose_write` produces a virtual diff:
-
-1. Review each proposed hunk.
-2. Accept or reject individual hunks.
-3. Confirm the overall result.
-4. Forge applies only accepted hunks.
-
-Existing line endings and trailing-newline style are preserved.
-
-### Commands
-
-Commands require explicit confirmation before execution. Forge:
-
-- runs commands in the workspace root
-- caps returned output at 8 KiB
-- supports cancellation
-- stops the process tree after 120 seconds or when Stop is used
-
-Commands run with your operating-system permissions. Approval is confirmation of intent, not an OS sandbox.
-
-### Undo
-
-Run **Forge: Undo last applied change** to restore the most recently applied Forge edit.
-
-- Tracks up to 50 changes
-- Refuses to overwrite later manual edits
-- Works across editor reopen while the extension remains active
-- Is not persisted across extension reload
-
-Native VS Code `Ctrl+Z`/`Cmd+Z` remains available for normal undo behavior.
-
-
-## Context assembly
-
-Forge Agent automatically selects relevant workspace context before executing a turn in Agent mode:
-
-1. **Explicit mentions**: Explicit `@file:path` and `@symbol:name` mentions are granted top priority. File slices are capped at 40 lines plus top-level signatures; symbols provide a bounded window around the target symbol.
-2. **Ranked candidate shortlist**: Keywords extracted from the prompt are searched across the repository using ripgrep. Hits are scored by term matches, path matches, top-level symbol definitions matching keywords, and importing files (downstream consumers of modified modules). Dense hit windows are capped at 40 lines; symbols are capped at 25 signatures.
-3. **Repo map**: A compact file-tree overview is budgeted to at most 20% of the token allocation.
-4. **Token budgeting**: A greedy packer fills items by priority within the configured token budget (default `6000` tokens, or `1500` tokens for the Groq fallback, estimated at ~4 characters per token). Items that exceed available headroom are line-truncated if at least 80 tokens remain, or safely dropped.
-5. **Context used block in the panel**: The Agent chat panel displays a collapsible **Context used** block detailing:
-   - A budget summary line: `Context: <N> items, <used> of <budget> estimated tokens`
-   - Each selected item with its path/slice, estimated token size, and rationale (why it was chosen).
-   - Real TrueForge harness events (subagent lifecycle lines like `Subagent search started` and compaction lines like `Context compacted`) and session identity (`Session: <id>`).
-
-
-
-## Extension settings
-
-| Setting | Default | Description |
-|---|---|---|
-| `forge.baseUrl` | `http://localhost:8790` | TrueForge server URL |
-| `forge.agentName` | `forge-agent` | Primary agent |
-| `forge.fallbackAgentName` | `forge-agent-fallback` | Fallback agent |
-| `forge.contextBudget` | `2000` | Agent context token estimate |
-| `forge.fallbackContextBudget` | `1500` | Groq fallback context token estimate |
-
-The context budget is estimated from characters (`characters / 4`). It is not an exact provider tokenizer limit.
-
-## Performance tuning
-
-The extension incorporates latency optimizations without weakening safety:
-
-- **Context assembly scans**: Ripgrep literal keyword searches and module importer queries are combined into single alternated executions rather than spawning separate processes per keyword, preserving ranking inputs and cancellation responsiveness.
-- **Per-request read cache**: File contents and top-level symbol parses are cached in memory for the duration of a single `assembleContext` run and discarded at turn completion, preventing duplicate disk reads and regex AST parses without retaining stale data across requests.
-- **Lower default context budget**: Default `forge.contextBudget` is set to `2000` tokens (down from 6000), reducing initial prompt token payloads while keeping `forge.fallbackContextBudget` at `1500`.
-- **Fast retry and fail-fast resilience**: Permanent HTTP errors (401, 403, 400, 404) fail fast without retrying on the primary model, immediately falling back. Quota (429) wait hints are bounded to 12s (capped from 60s), adapter retries are capped at 2 attempts, and double-retry stacking across primary and fallback models is eliminated, dropping worst-case retry latency to ~20–30s.
-- **Tuned fallback agent**: Fallback agent reasoning effort is set to `low` and `max_tokens` is capped at `10000`, speeding up recovery turns.
-- **Safety rules unchanged**: MCP tool names (`read_file`, `list_dir`, `search_workspace`, `propose_write`, `run_command`), approval flows, serialized writes/commands, and per-hunk diff review remain strictly intact.
-
-## Groq compatibility behavior
-
-TrueForge 0.182.0 compatibility is handled through `scripts/groq-adapter.cjs`. The adapter:
-
-- strips incompatible assistant reasoning fields
-- removes unsupported reasoning parameters
-- preserves Groq tool calls and Server-Sent Events
-- honors quota retry hints
-- aborts waits when the downstream connection closes
-- retries recognized tool-schema generation errors at most two times
-- does not replay visible text output
-
-Groq account quotas and single-request token limits remain provider-side constraints. The adapter cannot create additional quota.
-
-## Safety and recovery
-
-Forge does not operate as an OS sandbox.
-
-- File proposals are checked against the reviewed base before application
-- Outside paths and symlinks are rejected
-- Commands require a fresh single-use approval
-- Approved commands can modify files or otherwise affect the system
-- Command effects cannot always be rolled back automatically
-- Cancelled or failed runs can retain previously approved effects
-
-Inspect `git status` after failed or cancelled operations and use **Undo last applied change** for Forge file edits.
-
-Provider output is not evidence that a workspace edit was saved. Confirm the returned tool result and inspect the workspace.
-
-## Development checks
+### Workspace setup
 
 ```bash
-npm ci
-npm run typecheck
-npm test
-npm run build
+git clone https://github.com/pallets/flask.git
+cd flask
+git checkout 22d924701a6ae2e4cd01e9a15bbaf3946094af65
+python -m venv .venv
 ```
 
-The test suite covers agents, context assembly, retries, cancellation, review behavior, command safety, MCP integration, and configuration contracts.
+Activate the virtual environment:
+- Windows PowerShell: `.venv\Scripts\Activate.ps1`
+- macOS/Linux: `source .venv/bin/activate`
 
-## Flask demo
+Install Flask dependencies (pinning pytest < 9 for Flask 3.1.3 compatibility):
+```bash
+pip install -e . "pytest<9" python-dotenv asgiref
+```
 
-An optional Flask 3.1.3 demo is documented in [scripts/demo.md](scripts/demo.md). Demo setup and verification also use:
+Open the Flask repository in the Extension Development Host.
 
-- [docs/RUBRIC.md](docs/RUBRIC.md)
-- [docs/LIVE_TESTS.md](docs/LIVE_TESTS.md)
-- [docs/AUDIT.md](docs/AUDIT.md)
-- [docs/SUBMISSION_STATUS.md](docs/SUBMISSION_STATUS.md)
-- [docs/WRITEUP.md](docs/WRITEUP.md)
+### Task A — Inline edit
 
-## License
+1. Open `src/flask/helpers.py` and select the `get_debug_flag` function.
+2. Trigger inline edit (`Ctrl+K Ctrl+I` on Windows/Linux, `Cmd+K Cmd+I` on macOS).
+3. Enter the exact prompt:
+   ```
+   Treat the values 'off' and 'n' as false as well, case-insensitively, and update the docstring to list every value that is treated as false.
+   ```
+4. Review the proposed diff in the side-by-side editor. Accept the desired hunks and confirm.
+5. Verification:
+   - Windows PowerShell:
+     ```powershell
+     $env:PYTHONPATH="src"
+     python <extension-repo>\scripts\verify-flask-demo.py A
+     ```
+   - macOS/Linux:
+     ```bash
+     PYTHONPATH=src python <extension-repo>/scripts/verify-flask-demo.py A
+     ```
+6. Test undo: run `Forge: Undo last applied change` from the Command Palette.
+7. Reset workspace:
+   ```bash
+   git checkout .
+   git clean -fd
+   ```
 
-MIT
+### Task B — Agent mode (no files mentioned)
+
+1. Open the chat panel (`Forge: Open Agent Panel`).
+2. Enter the exact prompt:
+   ```
+   Add a new built-in CLI command flask config that prints the loaded application's configuration as JSON, masking the values of any key containing SECRET, PASSWORD, TOKEN or KEY as "***". It must appear in flask --help, be covered by a test, and be documented alongside the other built-in commands.
+   ```
+3. Expand **Context used** to verify discovered files, reasons, and token budget.
+4. Review proposed changes across `src/flask/cli.py`, `tests/test_cli.py`, and `docs/cli.rst`. Accept hunks and confirm.
+5. Approve the test execution command when prompted.
+6. Verification:
+   ```bash
+   python -m pytest tests/test_cli.py -q
+   python -m flask --help
+   ```
+   - Windows PowerShell:
+     ```powershell
+     $env:PYTHONPATH="src"
+     python <extension-repo>\scripts\verify-flask-demo.py B
+     ```
+   - macOS/Linux:
+     ```bash
+     PYTHONPATH=src python <extension-repo>/scripts/verify-flask-demo.py B
+     ```
+7. Reset workspace:
+   ```bash
+   git checkout .
+   git clean -fd
+   ```
+
+### Task C — Resilience and failure handling
+
+1. Stop the Groq adapter or set an invalid primary key in TrueForge provider settings (leaving the fallback provider valid).
+2. Repeat the exact Task A inline-edit request on `get_debug_flag` in `src/flask/helpers.py`.
+3. Observe initial retry notice, then the takeover notice: `Primary model failed, using fallback`. The request completes in a fresh session on the fallback model.
+4. Reject proposed writes to keep the checkout clean.
+5. Reset workspace:
+   ```bash
+   git checkout .
+   git clean -fd
+   ```
+
+## Known limitations
+
+- **Command permissions**: Shell commands run with the host user's permissions. Path preflight checks reject obvious parent traversal and external paths, but `run_command` is not an OS sandbox. Approved command effects cannot be rolled back automatically.
+- **In-memory undo**: The custom undo stack (`forge.undoLast`) retains up to 50 edits in memory and does not survive extension host reloads or VS Code restarts.
+- **Approved operation guard**: To prevent duplicate external mutations, automatic retry and fallback are disabled once an approval has been granted for a write or command; cancelled or failed runs can retain previously approved effects.
+- **Provider outage**: If primary and fallback agents share the same provider endpoint, an account-level quota exhaustion or provider-wide outage will impact both models.
+- **Context estimation**: Token budgeting uses a character-based heuristic (~4 characters per token) rather than provider-specific BPE tokenizers.
+- **Single active request**: Only one request can be processed per workspace at a time.
+- **Dynamic subagents**: Subagent handling is implemented and tested, but subagent spawning is dynamic and may not trigger on smaller tasks within token limits.
+
+## AI tools used
+
+- GitHub Copilot
+- ChatGPT
+- [TODO: confirm all AI tools]
+
+## Licence
+
+MIT License. See [LICENSE](LICENSE) for details.
