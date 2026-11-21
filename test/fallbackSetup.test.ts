@@ -108,7 +108,7 @@ it('configures NVIDIA NIM as fallback provider using fake credentials without ex
     fetchImpl,
   });
 
-  expect(result).toBe('Registered provider forge-fallback for model mistral-large-4-1t-a52b.');
+  expect(result).toBe('Registered provider forge-fallback for model mistralai/mistral-large-4-1t-a52b as forge-fallback/mistral-large-4-1t-a52b; updated agents: forge-agent-fallback.');
   expect(result).not.toContain('nvapi');
 
   // Verify provider payload
