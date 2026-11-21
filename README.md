@@ -52,10 +52,10 @@ Before executing a turn in Agent mode, Forge Agent automatically gathers relevan
 ## Model setup
 
 - **Models used**:
-  - Primary agent (`forge-agent`): Google Gemini `google-gemini/gemini-3-8-flash`, temperature 0.2, serialized tool calls (`parallel_tool_calls: false`), `reasoning_effort: "low"`, `max_tokens: 10000`.
-  - Inline agent (`forge-inline`): Google Gemini `google-gemini/gemini-3-8-flash`, temperature 0.2.
-  - Fallback agent (`forge-agent-fallback`): NVIDIA NIM `mistralai/mistral-large-4-1t-a52b` (configured name: `forge-fallback/mistral-large-4-1t-a52b`), temperature 0.2, `max_tokens: 8000`.
-- **Where they run**: Primary and inline models run on Google cloud APIs (`google-gemini/gemini-3-8-flash`). The fallback model runs on NVIDIA NIM cloud APIs (`forge-fallback/mistral-large-4-1t-a52b`). TrueForge runs locally on `127.0.0.1`. (The Groq adapter `scripts/groq-adapter.cjs` is optional and not used on the default path).
+  - Primary agent (`forge-agent`): NVIDIA NIM `forge-nvidia/nemotron-3-5-lightning-30b-a3b`, temperature 0.2, serialized tool calls (`parallel_tool_calls: false`), `max_tokens: 8000`.
+  - Inline agent (`forge-inline`): NVIDIA NIM `forge-nvidia/nemotron-3-5-lightning-30b-a3b`, temperature 0.2.
+  - Fallback agent (`forge-agent-fallback`): Google Gemini `google-gemini/gemini-3-8-flash` (configured name: `google-gemini/gemini-3-8-flash`), temperature 0.2, `max_tokens: 8000`.
+- **Where they run**: Primary and inline models run on NVIDIA NIM cloud APIs (`forge-nvidia/nemotron-3-5-lightning-30b-a3b`). The fallback model runs on Google Gemini cloud APIs (`google-gemini/gemini-3-8-flash`). TrueForge runs locally on `127.0.0.1`. (The Groq adapter `scripts/groq-adapter.cjs` is optional and not used on the default path).
 - **Cost**: Google Gemini and NVIDIA NIM free tiers, approximately INR 0.
 - **How to switch models**:
   - To change provider models, edit the model fields in `agents/*.json` or update providers in the TrueForge UI (`http://localhost:8790`).

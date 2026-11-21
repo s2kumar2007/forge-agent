@@ -27,8 +27,8 @@ export async function syncAgents(client: TrueForge, agents: AgentFile[]): Promis
       try {
         const existing = await findAgent(client, a.name);
         if (existing) {
-          const configuredModel = a.name === 'forge-agent-fallback' ? existing.manifest.model.name : undefined;
-          const manifest = configuredModel?.startsWith('forge-fallback/')
+          const configuredModel = existing.manifest?.model?.name;
+          const manifest = configuredModel && (configuredModel.startsWith('forge-nvidia/') || configuredModel.startsWith('forge-fallback/'))
             ? { ...a.manifest, model: { ...a.manifest.model, name: configuredModel } }
             : a.manifest;
           await client.agents.update(existing.id, { description: a.description, manifest });

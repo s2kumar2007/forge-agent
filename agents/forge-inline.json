@@ -3,7 +3,7 @@
   "description": "Forge inline-edit agent: rewrites one selection via propose_write.",
   "manifest": {
     "model": {
-      "name": "google-gemini/gemini-3-8-flash",
+      "name": "forge-nvidia/nemotron-3-5-lightning-30b-a3b",
       "params": {
         "temperature": 0.2
       }

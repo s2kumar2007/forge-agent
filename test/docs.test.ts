@@ -9,9 +9,9 @@ describe('submission documentation contracts',()=>{
   it('keeps model references synchronized with documented configured names',async()=>{
     const agents=await loadAgentFiles('agents');const readme=await fs.readFile('README.md','utf8');
     for(const agent of agents)expect(readme).toContain(agent.manifest.model.name);
-    expect(agents.find(a=>a.name==='forge-agent')?.manifest.model.name).toBe('google-gemini/gemini-3-8-flash');
-    expect(agents.find(a=>a.name==='forge-inline')?.manifest.model.name).toBe('google-gemini/gemini-3-8-flash');
-    expect(agents.find(a=>a.name==='forge-agent-fallback')?.manifest.model.name).toBe('forge-fallback/mistral-large-4-1t-a52b');
+    expect(agents.find(a=>a.name==='forge-agent')?.manifest.model.name).toBe('forge-nvidia/nemotron-3-5-lightning-30b-a3b');
+    expect(agents.find(a=>a.name==='forge-inline')?.manifest.model.name).toBe('forge-nvidia/nemotron-3-5-lightning-30b-a3b');
+    expect(agents.find(a=>a.name==='forge-agent-fallback')?.manifest.model.name).toBe('google-gemini/gemini-3-8-flash');
   });
   it('fails if primary and fallback agents use the same provider to ensure independent fallback', async () => {
     const agents = await loadAgentFiles('agents');
@@ -24,8 +24,8 @@ describe('submission documentation contracts',()=>{
     const fallbackProvider = fallback!.manifest.model.name.split('/')[0];
 
     expect(primaryProvider).not.toBe(fallbackProvider);
-    expect(primaryProvider).toBe('google-gemini');
-    expect(fallbackProvider).toBe('forge-fallback');
+    expect(primaryProvider).toBe('forge-nvidia');
+    expect(fallbackProvider).toBe('google-gemini');
   });
 });
 
