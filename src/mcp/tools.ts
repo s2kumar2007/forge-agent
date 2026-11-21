@@ -16,25 +16,50 @@ async function guarded(fn: () => Promise<ToolResult>): Promise<ToolResult> {
   try { return await fn(); } catch (e) { return fail(e instanceof PathError ? `Refused: ${e.message}` : `Error: ${e instanceof Error ? e.message : String(e)}`); }
 }
 
-const seenReads = new Set<string>();
-const seenSearches = new Set<string>();
-let readCount = 0;
+export interface ToolOptions {
+  getExplorationBudget?: () => number;
+}
 
-export function resetToolDeduplication(): void {
+let defaultExplorationBudget = 12;
+let readOnlyCount = 0;
+
+export function setExplorationBudget(n: number): void {
+  defaultExplorationBudget = Math.max(1, n);
+}
+
+export function resetToolRunState(): void {
+  readOnlyCount = 0;
   seenReads.clear();
   seenSearches.clear();
   readCount = 0;
 }
 
+export const resetToolDeduplication = resetToolRunState;
+
+const seenReads = new Set<string>();
+const seenSearches = new Set<string>();
+let readCount = 0;
+
 /** Registers the five editor tools. All paths are validated inside the workspace. */
-export function registerEditorTools(mcp: McpServer, api: EditorApi): void {
+export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: ToolOptions): void {
   const root = api.root();
+
+  function checkExplorationBudget(): ToolResult | undefined {
+    const limit = options?.getExplorationBudget ? options.getExplorationBudget() : defaultExplorationBudget;
+    if (readOnlyCount >= limit) {
+      return fail('Exploration budget reached. Call propose_write now for each target file.');
+    }
+    readOnlyCount++;
+    return undefined;
+  }
 
   mcp.registerTool('read_file', {
     description: 'Read a workspace file, optionally only lines start..end (1-based, inclusive; maximum 40 lines recommended, up to 80 lines absolute limit). Prefer reading short slices.',
     inputSchema: { path: z.string(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() },
     annotations: { readOnlyHint: true },
   }, ({ path, start, end }) => guarded(async () => {
+    const budgetError = checkExplorationBudget();
+    if (budgetError) return budgetError;
     if (isSecretPath(path)) return fail('blocked: secret-like file');
     const abs = await resolveInsideReal(root, path);
     const rel = toRel(root, abs);
@@ -72,6 +97,8 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi): void {
     inputSchema: { path: z.string().default('.') },
     annotations: { readOnlyHint: true },
   }, ({ path }) => guarded(async () => {
+    const budgetError = checkExplorationBudget();
+    if (budgetError) return budgetError;
     if (isSecretPath(path)) return ok('(empty)');
     const abs = await resolveInsideReal(root, path);
     if (isSecretPath(toRel(root, abs))) return ok('(empty)');
@@ -86,6 +113,8 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi): void {
     inputSchema: { query: z.string().min(1), kind: z.enum(['text', 'symbol']), max_results: z.number().int().min(1).max(50).default(20) },
     annotations: { readOnlyHint: true },
   }, ({ query, kind, max_results }) => guarded(async () => {
+    const budgetError = checkExplorationBudget();
+    if (budgetError) return budgetError;
     const searchKey = `${kind}:${query}`;
     if (seenSearches.has(searchKey)) {
       return ok(`(Search for "${query}" [${kind}] was already performed in this session. Avoid repeating searches. Formulate edits and call propose_write immediately.)`);

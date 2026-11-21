@@ -63,6 +63,12 @@
           "default": 1500,
           "minimum": 500,
           "description": "Token budget (~4 chars/token) for context when using the fallback agent."
+        },
+        "forge.explorationBudget": {
+          "type": "number",
+          "default": 12,
+          "minimum": 1,
+          "description": "Exploration budget: maximum read-only tool calls (read_file, search_workspace, list_dir) allowed per run."
         }
       }
     },

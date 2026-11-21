@@ -9,5 +9,6 @@ export function getConfig() {
     fallbackAgentName: c.get<string>('fallbackAgentName', 'forge-agent-fallback'),
     contextBudget: Math.max(500, c.get<number>('contextBudget', 2000)),
     fallbackContextBudget: Math.max(500, c.get<number>('fallbackContextBudget', 1500)),
+    explorationBudget: Math.max(1, c.get<number>('explorationBudget', 12)),
   };
 }

@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { registerEditorTools } from '../src/mcp/tools';
+import { registerEditorTools, resetToolRunState, setExplorationBudget } from '../src/mcp/tools';
 import type { EditorApi } from '../src/workspace/types';
 import { rgText } from '../src/workspace/ripgrep';
 
@@ -71,4 +71,70 @@ it('bounds large-file reads so model history cannot absorb a whole source file',
  const oversized:any=await c.callTool({name:'read_file',arguments:{path:'large.txt',start:1,end:81}});expect(oversized.isError).toBe(true);expect(text(oversized)).toContain('limited to 80 lines');
  const reversed:any=await c.callTool({name:'read_file',arguments:{path:'large.txt',start:20,end:10}});expect(reversed.isError).toBe(true);expect(text(reversed)).toContain('greater than or equal');
  const slice:any=await c.callTool({name:'read_file',arguments:{path:'large.txt',start:21,end:30}});expect(slice.isError).not.toBe(true);expect(text(slice)).toContain('lines 21-30 of 100');
+});
+
+describe('exploration budget in tools (ITEM 2)', () => {
+  it('limits read-only tools to the exploration budget and never limits write or command', async () => {
+    resetToolRunState();
+    setExplorationBudget(12);
+    const c = await connect();
+
+    // 12 read-only calls (mix of read_file, search_workspace, list_dir)
+    for (let i = 1; i <= 12; i++) {
+      let res: any;
+      if (i % 3 === 1) {
+        res = await c.callTool({ name: 'read_file', arguments: { path: 'large.txt', start: i, end: i } });
+      } else if (i % 3 === 2) {
+        res = await c.callTool({ name: 'search_workspace', arguments: { query: `query_${i}`, kind: 'text' } });
+      } else {
+        res = await c.callTool({ name: 'list_dir', arguments: { path: '.' } });
+      }
+      expect(res.isError).toBeFalsy();
+    }
+
+    // 13th read-only call fails with exploration budget error
+    const blockedRead: any = await c.callTool({ name: 'read_file', arguments: { path: 'a.py', start: 1, end: 1 } });
+    expect(blockedRead.isError).toBe(true);
+    expect(text(blockedRead)).toContain('Exploration budget reached. Call propose_write now for each target file.');
+
+    const blockedSearch: any = await c.callTool({ name: 'search_workspace', arguments: { query: 'another', kind: 'text' } });
+    expect(blockedSearch.isError).toBe(true);
+    expect(text(blockedSearch)).toContain('Exploration budget reached. Call propose_write now for each target file.');
+
+    const blockedList: any = await c.callTool({ name: 'list_dir', arguments: { path: '.' } });
+    expect(blockedList.isError).toBe(true);
+    expect(text(blockedList)).toContain('Exploration budget reached. Call propose_write now for each target file.');
+
+    // propose_write and run_command are never limited
+    const writeRes: any = await c.callTool({ name: 'propose_write', arguments: { path: 'a.py', new_content: 'ok', rationale: 'r' } });
+    expect(writeRes.isError).toBeFalsy();
+
+    const cmdRes: any = await c.callTool({ name: 'run_command', arguments: { command: 'echo ok' } });
+    expect(cmdRes.isError).toBeFalsy();
+
+    // Counter resets on next run
+    resetToolRunState();
+    const freshRead: any = await c.callTool({ name: 'read_file', arguments: { path: 'a.py', start: 1, end: 1 } });
+    expect(freshRead.isError).toBeFalsy();
+  });
+
+  it('honors a custom exploration budget setting', async () => {
+    resetToolRunState();
+    setExplorationBudget(2);
+    const c = await connect();
+
+    const r1: any = await c.callTool({ name: 'read_file', arguments: { path: 'large.txt', start: 1, end: 2 } });
+    expect(r1.isError).toBeFalsy();
+    const r2: any = await c.callTool({ name: 'read_file', arguments: { path: 'large.txt', start: 3, end: 4 } });
+    expect(r2.isError).toBeFalsy();
+
+    // 3rd read exceeds budget of 2
+    const r3: any = await c.callTool({ name: 'read_file', arguments: { path: 'large.txt', start: 5, end: 6 } });
+    expect(r3.isError).toBe(true);
+    expect(text(r3)).toContain('Exploration budget reached. Call propose_write now for each target file.');
+
+    // Reset default
+    setExplorationBudget(12);
+    resetToolRunState();
+  });
 });

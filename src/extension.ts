@@ -4,7 +4,7 @@ import { startEditorMcpServer, type EditorMcpServer } from './mcp/server';
 import { createClient, registerMcpServer } from './forge/client';
 import { getAgentModel, loadAgentFiles, syncAgents } from './forge/agents';
 import { ChatPanel } from './panel/ChatPanel';
-import { registerEditorTools } from './mcp/tools';
+import { registerEditorTools, resetToolRunState } from './mcp/tools';
 import { findRg, VsCodeEditorApi } from './workspace/vscodeApi';
 import { DecisionStore } from './review/decisions';
 import { UndoStack } from './review/undo';
@@ -49,7 +49,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     getClient: () => createClient(getConfig().baseUrl),
     approvals,
     agents: () => ({ primary: getConfig().agentName, fallback: getConfig().fallbackAgentName, fallbackModel }),
-    onRunStart: () => api?.beginRun(),
+    onRunStart: () => { api?.beginRun(); resetToolRunState(); },
     onCancel: () => { store.clear(); api?.cancelCommands(); },
     logError: (err) => { outputChannel.appendLine(err instanceof Error ? (err.stack ?? err.message) : String(err)); },
   });
@@ -71,7 +71,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
 async function bootstrap(ctx: vscode.ExtensionContext, api: VsCodeEditorApi | undefined): Promise<string | undefined> {
   if (!api) throw new Error('Open a workspace folder first.');
-  mcp ??= await startEditorMcpServer((server) => registerEditorTools(server, api));
+  mcp ??= await startEditorMcpServer((server) => registerEditorTools(server, api, { getExplorationBudget: () => getConfig().explorationBudget }));
   const client = createClient(getConfig().baseUrl);
   await registerMcpServer(client, mcp.url, mcp.token);
   const agents = await loadAgentFiles(vscode.Uri.joinPath(ctx.extensionUri, 'agents').fsPath);
