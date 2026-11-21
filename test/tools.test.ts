@@ -25,9 +25,9 @@ const api: EditorApi = {
   applyProposal: async (abs, candidate) => { writes.push(abs); candidates.push(candidate); return 'REFUSED: not reviewed'; },
 };
 
-async function connect() {
+async function connect(customApi: EditorApi = api) {
   const server = new McpServer({ name: 't', version: '0' });
-  registerEditorTools(server, api);
+  registerEditorTools(server, customApi);
   const [a, b] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'c', version: '0' });
   await Promise.all([server.connect(a), client.connect(b)]);
@@ -285,5 +285,48 @@ describe('read_file outline option (ITEM 1)', () => {
     const r: any = await c.callTool({ name: 'read_file', arguments: { path: 'a.py', start: 1, end: 1 } });
     expect(r.isError).toBeFalsy();
     expect(text(r)).toContain('def hello():');
+  });
+});
+
+describe('search_workspace symbol preview (ITEM 2)', () => {
+  it('includes definition line number and next 6 lines in each symbol hit', async () => {
+    resetToolRunState();
+    const fileContent = [
+      '# prelude 1',
+      '# prelude 2',
+      'def calculate_total(prices, tax_rate): # line 3',
+      '    subtotal = sum(prices) # line 4',
+      '    tax = subtotal * tax_rate # line 5',
+      '    discount = 0 # line 6',
+      '    if subtotal > 100: # line 7',
+      '        discount = 10 # line 8',
+      '    return subtotal + tax - discount # line 9',
+      '# after line 10',
+      '# after line 11',
+    ].join('\n');
+    fs.writeFileSync(path.join(dir, 'calc_test.py'), fileContent);
+
+    const symbolApi: EditorApi = {
+      ...api,
+      searchSymbols: async () => [
+        { name: 'calculate_total', kind: 'def', path: 'calc_test.py', line: 3 },
+      ],
+    };
+
+    const c = await connect(symbolApi);
+    const res: any = await c.callTool({ name: 'search_workspace', arguments: { query: 'calculate_total', kind: 'symbol' } });
+    expect(res.isError).toBeFalsy();
+    const out = text(res);
+    expect(out).toContain('calc_test.py:3  def calculate_total');
+    expect(out).toContain('3: def calculate_total(prices, tax_rate):');
+    expect(out).toContain('4:     subtotal = sum(prices)');
+    expect(out).toContain('5:     tax = subtotal * tax_rate');
+    expect(out).toContain('6:     discount = 0');
+    expect(out).toContain('7:     if subtotal > 100:');
+    expect(out).toContain('8:         discount = 10');
+    expect(out).toContain('9:     return subtotal + tax - discount');
+    // Line 10 should NOT be included because definition is line 3, plus next 6 lines = lines 3..9
+    expect(out).not.toContain('line 10');
+    expect(out).not.toContain('line 11');
   });
 });

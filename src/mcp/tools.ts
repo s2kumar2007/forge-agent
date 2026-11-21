@@ -130,7 +130,37 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     if (kind === 'symbol') {
       const rawHits = (await api.searchSymbols(query, 100)).filter((s) => !isSecretPath(s.path));
       const ranked = rankSymbols(rawHits, query, max_results);
-      return ok(ranked.map((s) => `${s.path}:${s.line}  ${s.kind} ${s.name}  -- why: ${s.why}`).join('\n') || 'No symbols found.');
+      if (ranked.length === 0) return ok('No symbols found.');
+      const fileTextCache = new Map<string, string[] | undefined>();
+      const getLines = async (relPath: string): Promise<string[] | undefined> => {
+        if (fileTextCache.has(relPath)) return fileTextCache.get(relPath);
+        try {
+          const abs = await resolveInsideReal(root, relPath);
+          if (isSecretPath(toRel(root, abs))) {
+            fileTextCache.set(relPath, undefined);
+            return undefined;
+          }
+          const text = await api.readText(abs);
+          const ls = text !== undefined ? text.split('\n').map((l) => l.replace(/\r$/, '')) : undefined;
+          fileTextCache.set(relPath, ls);
+          return ls;
+        } catch {
+          fileTextCache.set(relPath, undefined);
+          return undefined;
+        }
+      };
+      const formatted = await Promise.all(ranked.map(async (s) => {
+        let hitText = `${s.path}:${s.line}  ${s.kind} ${s.name}  -- why: ${s.why}`;
+        const lines = await getLines(s.path);
+        if (lines && s.line >= 1 && s.line <= lines.length) {
+          const startLine = s.line;
+          const endLine = Math.min(lines.length, startLine + 6);
+          const snippet = lines.slice(startLine - 1, endLine).map((l, idx) => `  ${startLine + idx}: ${l.slice(0, 240)}`).join('\n');
+          if (snippet) hitText += `\n${snippet}`;
+        }
+        return hitText;
+      }));
+      return ok(formatted.join('\n'));
     }
     const rawHits = (await api.searchText(query, 500)).filter((h) => !isSecretPath(h.path));
     const ranked = rankTextHits(rawHits, query, max_results);
