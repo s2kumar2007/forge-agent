@@ -20,7 +20,7 @@ let mcp: EditorMcpServer | undefined;
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const store = new DecisionStore();
-  const undo = new UndoStack();
+  const undo = new UndoStack(ctx.workspaceState);
   const api = root ? new VsCodeEditorApi(root, findRg(ctx.extensionUri.fsPath), store, undo) : undefined;
 
   const ctxDeps = root && api ? new WorkspaceContextDeps(api, findRg(ctx.extensionUri.fsPath), root) : undefined;

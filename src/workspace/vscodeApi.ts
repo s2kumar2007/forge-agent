@@ -8,7 +8,7 @@ import { runShell } from './runCommand';
 import { resolveInside, resolveInsideReal, toRel } from './paths';
 import { DecisionStore, proposalKey } from '../review/decisions';
 import { applyHunks } from '../review/hunks';
-import { UndoStack } from '../review/undo';
+import { UndoStack, hashContent } from '../review/undo';
 
 /** Finds a ripgrep binary: our own dependency first, then VS Code's bundled one, then PATH. */
 export function findRg(extPath: string): string {
@@ -108,7 +108,9 @@ export class VsCodeEditorApi implements EditorApi {
     if (!e) return 'Nothing to undo.';
     const uri = vscode.Uri.file(e.path);
     const doc = await vscode.workspace.openTextDocument(uri);
-    if (doc.getText() !== e.after) return `Cannot undo ${e.label}: it was modified after the Forge change.`;
+    const current = doc.getText();
+    const matches = e.after !== undefined ? current === e.after : (e.appliedTextHash ? hashContent(current) === e.appliedTextHash : false);
+    if (!matches) return `Cannot undo ${e.label}: it was modified after the Forge change.`;
     const edit = new vscode.WorkspaceEdit();
     await resolveInsideReal(this.rootDir, e.path);
     if (e.created) edit.deleteFile(uri);
