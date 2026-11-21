@@ -55,14 +55,14 @@ Before executing a turn in Agent mode, Forge Agent automatically gathers relevan
   - Primary agent (`forge-agent`): Google Gemini `google-gemini/gemini-3-5-flash`, temperature 0.2, serialized tool calls (`parallel_tool_calls: false`), `reasoning_effort: "low"`, `max_tokens: 10000`.
   - Inline agent (`forge-inline`): Google Gemini `google-gemini/gemini-3-5-flash`, temperature 0.2.
   - Fallback agent (`forge-agent-fallback`): NVIDIA NIM `meta/llama-3.3-70b-instruct` (configured name: `forge-fallback/meta/llama-3.3-70b-instruct`), temperature 0.2, `max_tokens: 8000`.
-- **Where they run**: Models run on Groq and Google cloud APIs. TrueForge and the Groq compatibility adapter (`scripts/groq-adapter.cjs`) run locally on `127.0.0.1`.
-- **Cost**: Groq free tier, approximately INR 0.
+- **Where they run**: Primary and inline models run on Google cloud APIs (`google-gemini/gemini-3-5-flash`). The fallback model runs on NVIDIA NIM cloud APIs (`forge-fallback/meta/llama-3.3-70b-instruct`). TrueForge runs locally on `127.0.0.1`. (The Groq adapter `scripts/groq-adapter.cjs` is optional and not used on the default path).
+- **Cost**: Google Gemini and NVIDIA NIM free tiers, approximately INR 0.
 - **How to switch models**:
   - To change provider models, edit the model fields in `agents/*.json` or update providers in the TrueForge UI (`http://localhost:8790`).
-  - To configure an optional second OpenAI-compatible provider for the fallback agent, set `FALLBACK_BASE_URL` and `FALLBACK_MODEL` (and optionally `FALLBACK_API_KEY`) and run `node scripts/configure-fallback.cjs`. The extension preserves this selection during agent synchronization.
+  - To configure the fallback agent with NVIDIA NIM (or another OpenAI-compatible provider), set `FALLBACK_BASE_URL`, `FALLBACK_MODEL` and `FALLBACK_API_KEY`, then run `node scripts/configure-fallback.cjs`. The extension preserves this selection during agent synchronization.
 - **How the fallback works and its real limits**:
   - If the primary model encounters a permanent error (HTTP 401, 403, 413), it fails fast without retrying and immediately launches the fallback agent in a fresh session.
-  - If the primary encounters transient errors (HTTP 429, 500, 502, 503, network drop), it retries with exponential backoff up to a 12s cap (adapter retries capped at 2 attempts). If failures persist, it transitions to `forge-agent-fallback`.
+  - If the primary encounters transient errors (HTTP 429, 500, 502, 503, network drop), it retries with exponential backoff up to a 12s cap. If failures persist, it transitions to `forge-agent-fallback` on the independent second provider (NVIDIA NIM).
   - **Replay guard**: To prevent duplicate side effects, automatic retry and fallback are disabled once a `propose_write` or `run_command` has been approved.
 
 ## Performance tuning
@@ -84,7 +84,9 @@ The extension incorporates latency and token optimizations without weakening saf
 - VS Code 1.90 or newer
 - Git
 - Python 3 with `pip` and `venv` (for Flask demo verification)
-- A Groq API key
+- A Google Gemini API key (for primary and inline models)
+- An NVIDIA NIM API key (for the fallback model; free tier at https://build.nvidia.com)
+- Optional: A Groq API key (optional alternative provider; not used on default path)
 
 ### 1. Install and build
 
@@ -114,23 +116,35 @@ OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1"]' npx @truefoundry/trueforge@0.182.0
 
 TrueForge will start on `http://localhost:8790`.
 
-### 3. Configure Groq without committing a key
+### 3. Configure providers without committing keys
+
+#### A. Primary provider: Google Gemini
+1. Open the TrueForge UI in your browser at `http://localhost:8790`.
+2. Navigate to **Settings** -> **Model Providers**.
+3. Add a **Google** provider named `google-gemini`, enter your Gemini API key, and ensure `gemini-3-5-flash` is enabled.
+
+#### B. Fallback provider: NVIDIA NIM (Second Provider)
+Configure NVIDIA NIM as the independent fallback provider using the helper script:
 
 **Windows PowerShell**
 ```powershell
-powershell -NoProfile -File .\scripts\configure-groq.ps1
+$env:FALLBACK_BASE_URL="https://integrate.api.nvidia.com/v1"
+$env:FALLBACK_MODEL="meta/llama-3.3-70b-instruct"
+$env:FALLBACK_API_KEY="<your-nvidia-nim-api-key>"
+node scripts/configure-fallback.cjs
 ```
-The script securely prompts for `GROQ_API_KEY` without displaying or saving it to disk.
 
 **macOS/Linux**
 ```bash
-GROQ_API_KEY="<your-groq-api-key>" node scripts/configure-groq.cjs
+FALLBACK_BASE_URL="https://integrate.api.nvidia.com/v1" \
+FALLBACK_MODEL="meta/llama-3.3-70b-instruct" \
+FALLBACK_API_KEY="<your-nvidia-nim-api-key>" \
+node scripts/configure-fallback.cjs
 ```
 
-The script registers the Groq provider in TrueForge and starts the local compatibility adapter on `127.0.0.1:8791`. If TrueForge is restarted, start the adapter with:
-```bash
-node scripts/groq-adapter.cjs
-```
+The script registers `forge-fallback` in TrueForge and points `forge-agent-fallback` to `forge-fallback/meta/llama-3.3-70b-instruct`. Credentials are saved only in TrueForge.
+
+*(Optional: Groq adapter `scripts/groq-adapter.cjs` and setup scripts `scripts/configure-groq.*` are retained in the repo for alternative setups, but are not used on the default path.)*
 
 ### 4. Load agent definitions and launch
 
@@ -218,7 +232,7 @@ Open the Flask repository in the Extension Development Host.
 
 ### Task C — Resilience and failure handling
 
-1. Stop the Groq adapter or set an invalid primary key in TrueForge provider settings (leaving the fallback provider valid).
+1. Set an invalid primary key in TrueForge provider settings (leaving the fallback provider valid).
 2. Repeat the exact Task A inline-edit request on `get_debug_flag` in `src/flask/helpers.py`.
 3. Observe initial retry notice, then the takeover notice: `Primary model failed, using fallback`. The request completes in a fresh session on the fallback model.
 4. Reject proposed writes to keep the checkout clean.

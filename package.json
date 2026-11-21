@@ -62,7 +62,7 @@
           "type": "number",
           "default": 1500,
           "minimum": 500,
-          "description": "Token budget (~4 chars/token) for context when falling back to Groq."
+          "description": "Token budget (~4 chars/token) for context when using the fallback agent."
         }
       }
     },
