@@ -1,7 +1,7 @@
 import * as http from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 
 export interface EditorMcpServer {
   url: string;
@@ -11,6 +11,24 @@ export interface EditorMcpServer {
 
 /** Hook so stage 2 can register tools without touching the HTTP plumbing. */
 export type ToolRegistrar = (server: McpServer) => void;
+
+/** Handle one stateless MCP request and buffer its bounded JSON response. */
+export async function handleEditorMcpRequest(register: ToolRegistrar, request: Request): Promise<Response> {
+  const mcp = new McpServer({ name: 'forge-editor', version: '0.1.0' });
+  register(mcp);
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    enableJsonResponse: true,
+  });
+  try {
+    await mcp.connect(transport);
+    const response = await transport.handleRequest(request);
+    return new Response(await response.arrayBuffer(), { status: response.status, headers: response.headers });
+  } finally {
+    await transport.close();
+    await mcp.close();
+  }
+}
 
 /**
  * Starts a stateless streamable-HTTP MCP server on 127.0.0.1 (random free port).
@@ -28,13 +46,23 @@ export async function startEditorMcpServer(register: ToolRegistrar): Promise<Edi
       if (req.method !== 'POST') return send(res, 405, 'method not allowed'); // stateless: no SSE GET channel
 
       const body = await readJson(req);
-      // Stateless mode: fresh server+transport per request, nothing to leak between calls.
-      const mcp = new McpServer({ name: 'forge-editor', version: '0.1.0' });
-      register(mcp);
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-      res.on('close', () => { void transport.close(); void mcp.close(); });
-      await mcp.connect(transport);
-      await transport.handleRequest(req, res, body);
+      const headers = new Headers();
+      for (const [name, value] of Object.entries(req.headers)) {
+        if (Array.isArray(value)) value.forEach((part) => headers.append(name, part));
+        else if (value !== undefined) headers.set(name, value);
+      }
+      const request = new Request(new URL(req.url ?? '/mcp', `http://${req.headers.host ?? '127.0.0.1'}`), {
+        method: req.method,
+        headers,
+        body: JSON.stringify(body),
+      });
+      const response = await handleEditorMcpRequest(register, request);
+      const responseBody = Buffer.from(await response.arrayBuffer());
+      const responseHeaders = Object.fromEntries(response.headers.entries());
+      delete responseHeaders['transfer-encoding'];
+      delete responseHeaders['content-length'];
+      res.writeHead(response.status, { ...responseHeaders, 'Content-Length': responseBody.byteLength });
+      res.end(responseBody);
     } catch (err) {
       if (!res.headersSent) send(res, 500, err instanceof Error ? err.message : 'error');
     }
