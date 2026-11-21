@@ -79,15 +79,13 @@ describe('exploration budget in tools (ITEM 2)', () => {
     setExplorationBudget(12);
     const c = await connect();
 
-    // 12 read-only calls (mix of read_file, search_workspace, list_dir)
+    // 12 unique read-only calls (read_file, search_workspace)
     for (let i = 1; i <= 12; i++) {
       let res: any;
-      if (i % 3 === 1) {
+      if (i % 2 === 1) {
         res = await c.callTool({ name: 'read_file', arguments: { path: 'large.txt', start: i, end: i } });
-      } else if (i % 3 === 2) {
-        res = await c.callTool({ name: 'search_workspace', arguments: { query: `query_${i}`, kind: 'text' } });
       } else {
-        res = await c.callTool({ name: 'list_dir', arguments: { path: '.' } });
+        res = await c.callTool({ name: 'search_workspace', arguments: { query: `query_${i}`, kind: 'text' } });
       }
       expect(res.isError).toBeFalsy();
     }
@@ -136,5 +134,60 @@ describe('exploration budget in tools (ITEM 2)', () => {
     // Reset default
     setExplorationBudget(12);
     resetToolRunState();
+  });
+});
+
+describe('loop breaker (ITEM 3)', () => {
+  it('returns duplicate message without re-running on identical arguments, resetting on next run', async () => {
+    resetToolRunState();
+    let commandRuns = 0;
+    const trackingApi: EditorApi = {
+      ...api,
+      runCommand: async (cmd) => {
+        commandRuns++;
+        return { exitCode: 0, output: `ran ${cmd}`, timedOut: false };
+      },
+    };
+
+    const server = new McpServer({ name: 't3', version: '0' });
+    registerEditorTools(server, trackingApi);
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const c = new Client({ name: 'c3', version: '0' });
+    await Promise.all([server.connect(a), c.connect(b)]);
+
+    // 1. read_file duplicate
+    const read1: any = await c.callTool({ name: 'read_file', arguments: { path: 'a.py', start: 1, end: 1 } });
+    expect(text(read1)).toContain('def hello():');
+    const read2: any = await c.callTool({ name: 'read_file', arguments: { path: 'a.py', start: 1, end: 1 } });
+    expect(text(read2)).toBe('Duplicate call: use the earlier result and continue.');
+    expect(read2.isError).toBeFalsy();
+
+    // 2. search_workspace duplicate
+    const search1: any = await c.callTool({ name: 'search_workspace', arguments: { query: 'hello', kind: 'text' } });
+    expect(text(search1)).toMatch(/a\.py:1/);
+    const search2: any = await c.callTool({ name: 'search_workspace', arguments: { query: 'hello', kind: 'text' } });
+    expect(text(search2)).toBe('Duplicate call: use the earlier result and continue.');
+
+    // 3. list_dir duplicate
+    const list1: any = await c.callTool({ name: 'list_dir', arguments: { path: '.' } });
+    expect(text(list1)).toContain('a.py');
+    const list2: any = await c.callTool({ name: 'list_dir', arguments: { path: '.' } });
+    expect(text(list2)).toBe('Duplicate call: use the earlier result and continue.');
+
+    // 4. run_command duplicate does NOT re-run underlying command
+    expect(commandRuns).toBe(0);
+    const cmd1: any = await c.callTool({ name: 'run_command', arguments: { command: 'echo test' } });
+    expect(commandRuns).toBe(1);
+    expect(text(cmd1)).toContain('ran echo test');
+
+    const cmd2: any = await c.callTool({ name: 'run_command', arguments: { command: 'echo test' } });
+    expect(commandRuns).toBe(1); // Crucial: did NOT re-run
+    expect(text(cmd2)).toBe('Duplicate call: use the earlier result and continue.');
+
+    // 5. Reset at start of next run allows execution again
+    resetToolRunState();
+    const cmd3: any = await c.callTool({ name: 'run_command', arguments: { command: 'echo test' } });
+    expect(commandRuns).toBe(2);
+    expect(text(cmd3)).toContain('ran echo test');
   });
 });

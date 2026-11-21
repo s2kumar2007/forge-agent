@@ -22,6 +22,26 @@ export interface ToolOptions {
 
 let defaultExplorationBudget = 12;
 let readOnlyCount = 0;
+const seenCalls = new Set<string>();
+
+function canonicalize(val: unknown): unknown {
+  if (val === null || typeof val !== 'object') return val;
+  if (Array.isArray(val)) return val.map(canonicalize);
+  const sorted: Record<string, unknown> = {};
+  for (const k of Object.keys(val as Record<string, unknown>).sort()) {
+    sorted[k] = canonicalize((val as Record<string, unknown>)[k]);
+  }
+  return sorted;
+}
+
+function checkDuplicateCall(tool: string, args: unknown): ToolResult | undefined {
+  const key = `${tool}:${JSON.stringify(canonicalize(args))}`;
+  if (seenCalls.has(key)) {
+    return ok('Duplicate call: use the earlier result and continue.');
+  }
+  seenCalls.add(key);
+  return undefined;
+}
 
 export function setExplorationBudget(n: number): void {
   defaultExplorationBudget = Math.max(1, n);
@@ -29,16 +49,10 @@ export function setExplorationBudget(n: number): void {
 
 export function resetToolRunState(): void {
   readOnlyCount = 0;
-  seenReads.clear();
-  seenSearches.clear();
-  readCount = 0;
+  seenCalls.clear();
 }
 
 export const resetToolDeduplication = resetToolRunState;
-
-const seenReads = new Set<string>();
-const seenSearches = new Set<string>();
-let readCount = 0;
 
 /** Registers the five editor tools. All paths are validated inside the workspace. */
 export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: ToolOptions): void {
@@ -58,6 +72,8 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     inputSchema: { path: z.string(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() },
     annotations: { readOnlyHint: true },
   }, ({ path, start, end }) => guarded(async () => {
+    const dup = checkDuplicateCall('read_file', { path, start, end });
+    if (dup) return dup;
     const budgetError = checkExplorationBudget();
     if (budgetError) return budgetError;
     if (isSecretPath(path)) return fail('blocked: secret-like file');
@@ -75,21 +91,7 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     if (requestedEnd - s + 1 > MAX_READ_LINES) return fail(`Read range is limited to ${MAX_READ_LINES} lines; requested ${requestedEnd - s + 1} lines. Request a smaller slice of at most 40 lines (e.g. start=560, end=599) or proceed directly to propose_write.`);
     const e = Math.min(requestedEnd, lines.length);
 
-    const sliceKey = `${rel}:${s}-${e}`;
-    if (seenReads.has(sliceKey)) {
-      return ok(`(Already read ${rel} lines ${s}-${e} in this session. Do not re-read identical slices. Formulate edits and call propose_write immediately.)`);
-    }
-    seenReads.add(sliceKey);
-    readCount++;
-
-    const baseResult = ok(`${rel} lines ${s}-${e} of ${lines.length}`, lines.slice(s - 1, e).join('\n'));
-    if (readCount >= 2) {
-      baseResult.content.push({
-        type: 'text',
-        text: `[Notice: Exploration read count is ${readCount}. You have sufficient context. Proceed immediately to propose_write for all target files: src/flask/cli.py, tests/test_cli.py, docs/cli.rst.]`,
-      });
-    }
-    return baseResult;
+    return ok(`${rel} lines ${s}-${e} of ${lines.length}`, lines.slice(s - 1, e).join('\n'));
   }));
 
   mcp.registerTool('list_dir', {
@@ -97,6 +99,8 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     inputSchema: { path: z.string().default('.') },
     annotations: { readOnlyHint: true },
   }, ({ path }) => guarded(async () => {
+    const dup = checkDuplicateCall('list_dir', { path });
+    if (dup) return dup;
     const budgetError = checkExplorationBudget();
     if (budgetError) return budgetError;
     if (isSecretPath(path)) return ok('(empty)');
@@ -113,13 +117,10 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     inputSchema: { query: z.string().min(1), kind: z.enum(['text', 'symbol']), max_results: z.number().int().min(1).max(50).default(20) },
     annotations: { readOnlyHint: true },
   }, ({ query, kind, max_results }) => guarded(async () => {
+    const dup = checkDuplicateCall('search_workspace', { query, kind, max_results });
+    if (dup) return dup;
     const budgetError = checkExplorationBudget();
     if (budgetError) return budgetError;
-    const searchKey = `${kind}:${query}`;
-    if (seenSearches.has(searchKey)) {
-      return ok(`(Search for "${query}" [${kind}] was already performed in this session. Avoid repeating searches. Formulate edits and call propose_write immediately.)`);
-    }
-    seenSearches.add(searchKey);
     if (kind === 'symbol') {
       const rawHits = (await api.searchSymbols(query, 100)).filter((s) => !isSecretPath(s.path));
       const ranked = rankSymbols(rawHits, query, max_results);
@@ -134,6 +135,8 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     description: 'Propose a reviewed file change. For existing files prefer edits: [{old_text,new_text}]; each old_text must match exactly once. For new files use complete new_content. Provide exactly one form, plus path and rationale. Nothing is written before hunk review. Call once per file.',
     inputSchema: { path: z.string(), new_content: z.string().optional(), edits: z.array(z.object({old_text:z.string().min(1),new_text:z.string()})).min(1).max(20).optional(), rationale: z.string() },
   }, (args) => guarded(async () => {
+    const dup = checkDuplicateCall('propose_write', args);
+    if (dup) return dup;
     if (isSecretPath(args.path)) return fail('blocked: secret-like file');
     const abs = await resolveInsideReal(root, args.path);
     if (isSecretPath(toRel(root, abs))) return fail('blocked: secret-like file');
@@ -145,6 +148,8 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     description: 'Run a shell command in the workspace root (e.g. tests). Requires user approval. Output is truncated to 8KB; 120s timeout.',
     inputSchema: { command: z.string().min(1) },
   }, ({ command }) => guarded(async () => {
+    const dup = checkDuplicateCall('run_command', { command });
+    if (dup) return dup;
     const r = await api.runCommand(command);
     return ok(`exit code: ${r.exitCode ?? 'none'}${r.timedOut ? ' (timed out)' : ''}\n${r.output}`);
   }));
