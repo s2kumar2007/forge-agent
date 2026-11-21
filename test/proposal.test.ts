@@ -36,3 +36,52 @@ it('does not store exact-edit decisions after Stop or when an anchor is ambiguou
  expect((await approvals.decide({name:'propose_write',args:{path:'exact.txt',edits:[{old_text:'a',new_text:'b'}]}},abort.signal)).status).toBe('deny');expect(store.size).toBe(0);
  expect((await approvals.decide({name:'propose_write',args:{path:'exact.txt',edits:[{old_text:'a a',new_text:'b'}]}},abort.signal)).status).toBe('deny');expect(store.size).toBe(0);
 });
+
+it('reports zero matches with at most 5 closest candidate lines (ITEM 4)', () => {
+  const fileLines = [
+    'import os',
+    'import sys',
+    'def calculate_total(items):',
+    '    total = 0',
+    '    for item in items:',
+    '        total += item.price',
+    '    return total',
+    'def print_receipt(items):',
+    '    print("Receipt:")',
+    '    print(calculate_total(items))',
+  ];
+  const fileText = fileLines.join('\n');
+
+  let thrownError: Error | undefined;
+  try {
+    materializeWrite(fileText, {
+      edits: [{ old_text: 'total += item.cost\nreturn total', new_text: 'return sum(items)' }],
+    });
+  } catch (e: any) {
+    thrownError = e;
+  }
+
+  expect(thrownError).toBeDefined();
+  expect(thrownError!.message).toContain('Exact edit text matched zero times.');
+  expect(thrownError!.message).toContain('Closest candidate lines:');
+
+  const linesAfterHeader = thrownError!.message.split('Closest candidate lines:\n')[1]!.split('\n');
+  expect(linesAfterHeader.length).toBeLessThanOrEqual(5);
+  expect(linesAfterHeader.join('\n')).toContain('total += item.price');
+});
+
+it('reports several matches with occurrences count (ITEM 4)', () => {
+  const fileText = 'val = 1\nval = 1\nval = 1\n';
+  let thrownError: Error | undefined;
+  try {
+    materializeWrite(fileText, {
+      edits: [{ old_text: 'val = 1', new_text: 'val = 2' }],
+    });
+  } catch (e: any) {
+    thrownError = e;
+  }
+
+  expect(thrownError).toBeDefined();
+  expect(thrownError!.message).toContain('Exact edit text matched several times');
+  expect(thrownError!.message).toContain('3 occurrences');
+});

@@ -1,5 +1,50 @@
 import { normalizeEol } from './hunks';
 
+function lineSimilarity(a: string, b: string): number {
+  const ta = a.trim();
+  const tb = b.trim();
+  if (!ta && !tb) return 1;
+  if (!ta || !tb) return 0;
+  if (ta === tb) return 2.0;
+  if (ta.includes(tb) || tb.includes(ta)) return 1.5;
+  const wordsA = new Set(ta.split(/\W+/).filter(Boolean));
+  const wordsB = new Set(tb.split(/\W+/).filter(Boolean));
+  if (wordsA.size === 0 || wordsB.size === 0) return 0;
+  let common = 0;
+  for (const w of wordsA) if (wordsB.has(w)) common++;
+  return common / (wordsA.size + wordsB.size - common);
+}
+
+export function findClosestCandidateLines(cLines: string[], nLines: string[]): string[] {
+  if (cLines.length === 0) return [];
+  const maxLines = Math.min(5, Math.min(cLines.length, Math.max(1, nLines.length)));
+  let bestScore = -1;
+  let bestIndex = 0;
+
+  for (let i = 0; i <= cLines.length - maxLines; i++) {
+    let score = 0;
+    for (let j = 0; j < maxLines; j++) {
+      score += lineSimilarity(cLines[i + j] ?? '', nLines[j] ?? '');
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
+  }
+
+  return cLines.slice(bestIndex, bestIndex + maxLines);
+}
+
+function zeroMatchError(cLines: string[], nLines: string[]): Error {
+  const closest = findClosestCandidateLines(cLines, nLines);
+  const snippet = closest.length > 0 ? closest.join('\n') : '(empty file)';
+  return new Error(`Exact edit text matched zero times. Closest candidate lines:\n${snippet}`);
+}
+
+function severalMatchError(count: number): Error {
+  return new Error(`Exact edit text matched several times (${count} occurrences); include a larger unique anchor.`);
+}
+
 /** Builds a candidate only; the normal review permit still controls every write. */
 export function materializeWrite(existing: string | undefined, args: Record<string, unknown>): string {
   const full = args.new_content !== undefined, patches = args.edits !== undefined;
@@ -23,12 +68,19 @@ export function materializeWrite(existing: string | undefined, args: Record<stri
     const replacement = normalizeEol(existing, edit.new_text);
 
     // 1. Direct exact substring match
-    const first = candidate.indexOf(needle);
-    if (first >= 0) {
-      if (candidate.indexOf(needle, first + 1) >= 0)
-        throw new Error('Exact edit text matches more than once; include a larger unique anchor.');
+    let exactCount = 0;
+    let pos = candidate.indexOf(needle);
+    while (pos !== -1) {
+      exactCount++;
+      pos = candidate.indexOf(needle, pos + 1);
+    }
+    if (exactCount === 1) {
+      const first = candidate.indexOf(needle);
       candidate = candidate.slice(0, first) + replacement + candidate.slice(first + needle.length);
       continue;
+    }
+    if (exactCount > 1) {
+      throw severalMatchError(exactCount);
     }
 
     // 2. Line-trimmed contiguous match fallback
@@ -40,7 +92,7 @@ export function materializeWrite(existing: string | undefined, args: Record<stri
 
     const trimmedN = nLines.map(l => l.trim());
     if (trimmedN.every(l => l.length === 0)) {
-      throw new Error('Exact edit text was not found; read a current slice and try again.');
+      throw zeroMatchError(cLines, nLines);
     }
 
     const matches: number[] = [];
@@ -62,10 +114,12 @@ export function materializeWrite(existing: string | undefined, args: Record<stri
       }
     }
 
-    if (matches.length === 0)
-      throw new Error('Exact edit text was not found; read a current slice and try again.');
-    if (matches.length > 1)
-      throw new Error('Exact edit text matches more than once; include a larger unique anchor.');
+    if (matches.length === 0) {
+      throw zeroMatchError(cLines, nLines);
+    }
+    if (matches.length > 1) {
+      throw severalMatchError(matches.length);
+    }
 
     const startLine = matches[0]!;
     const matchLineCount = trimmedN.length;
