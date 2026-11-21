@@ -83,3 +83,73 @@ it('does not expose credentials in a TrueForge error', async () => {
     fetchImpl,
   }).catch((error: Error) => error.message)).resolves.not.toContain('secret-test-key');
 });
+
+it('requires an API key when configuring NVIDIA NIM as fallback provider', async () => {
+  const fetchImpl = vi.fn();
+  await expect(configureFallback({
+    providerBaseUrl: 'https://integrate.api.nvidia.com/v1',
+    model: 'meta/llama-3.3-70b-instruct',
+    fetchImpl,
+  })).rejects.toThrow('FALLBACK_API_KEY is required for NVIDIA NIM');
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
+
+it('configures NVIDIA NIM as fallback provider using fake credentials without exposing them', async () => {
+  const calls: { url: string; method?: string; body?: string }[] = [];
+  const fetchImpl = vi.fn(async (url: string, options: { method?: string; body?: string } = {}) => {
+    calls.push({ url, ...options });
+    return options.method ? ok({}) : ok({ data: [] });
+  });
+
+  const result = await configureFallback({
+    providerBaseUrl: 'https://integrate.api.nvidia.com/v1',
+    model: 'meta/llama-3.3-70b-instruct',
+    apiKey: 'nvapi-fake-test-key-12345',
+    fetchImpl,
+  });
+
+  expect(result).toBe('Registered provider forge-fallback for model meta/llama-3.3-70b-instruct.');
+  expect(result).not.toContain('nvapi');
+
+  // Verify provider payload
+  const providerCall = calls.find((c) => c.url.endsWith('/settings/model-providers') && (c.method === 'POST' || c.method === 'PUT'))!;
+  const providerBody = JSON.parse(providerCall.body!);
+  expect(providerBody.manifest).toMatchObject({
+    type: 'custom',
+    name: 'forge-fallback',
+    base_url: 'https://integrate.api.nvidia.com/v1',
+    auth: { api_key: 'nvapi-fake-test-key-12345' },
+    models: [{ name: 'meta/llama-3.3-70b-instruct', model_id: 'meta/llama-3.3-70b-instruct' }],
+  });
+
+  // Verify agent payload
+  const agentCall = calls.find((c) => c.url.includes('/api/v1/agents') && (c.method === 'POST' || c.method === 'PUT'))!;
+  const agentBody = JSON.parse(agentCall.body!);
+  expect(agentBody.name).toBe('forge-agent-fallback');
+  expect(agentBody.manifest.model.name).toBe('forge-fallback/meta/llama-3.3-70b-instruct');
+});
+
+it('reads FALLBACK_BASE_URL, FALLBACK_MODEL and FALLBACK_API_KEY from environment', async () => {
+  const origEnv = { ...process.env };
+  try {
+    process.env.FALLBACK_BASE_URL = 'https://integrate.api.nvidia.com/v1';
+    process.env.FALLBACK_MODEL = 'meta/llama-3.3-70b-instruct';
+    process.env.FALLBACK_API_KEY = 'nvapi-env-fake-key';
+
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    const fetchImpl = vi.fn(async (url: string, options: { method?: string; body?: string } = {}) => {
+      calls.push({ url, ...options });
+      return options.method ? ok({}) : ok({ data: [] });
+    });
+
+    await configureFallback({ fetchImpl });
+
+    const providerCall = calls.find((c) => c.url.endsWith('/settings/model-providers') && c.method === 'POST')!;
+    const providerBody = JSON.parse(providerCall.body!);
+    expect(providerBody.manifest.base_url).toBe('https://integrate.api.nvidia.com/v1');
+    expect(providerBody.manifest.auth).toEqual({ api_key: 'nvapi-env-fake-key' });
+    expect(providerBody.manifest.models[0].name).toBe('meta/llama-3.3-70b-instruct');
+  } finally {
+    process.env = origEnv;
+  }
+});

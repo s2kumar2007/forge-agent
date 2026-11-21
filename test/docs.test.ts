@@ -13,6 +13,20 @@ describe('submission documentation contracts',()=>{
     expect(agents.find(a=>a.name==='forge-inline')?.manifest.model.name).toBe('google-gemini/gemini-3-5-flash');
     expect(agents.find(a=>a.name==='forge-agent-fallback')?.manifest.model.name).toBe('forge-fallback/meta/llama-3.3-70b-instruct');
   });
+  it('fails if primary and fallback agents use the same provider to ensure independent fallback', async () => {
+    const agents = await loadAgentFiles('agents');
+    const primary = agents.find((a) => a.name === 'forge-agent');
+    const fallback = agents.find((a) => a.name === 'forge-agent-fallback');
+    expect(primary).toBeDefined();
+    expect(fallback).toBeDefined();
+
+    const primaryProvider = primary!.manifest.model.name.split('/')[0];
+    const fallbackProvider = fallback!.manifest.model.name.split('/')[0];
+
+    expect(primaryProvider).not.toBe(fallbackProvider);
+    expect(primaryProvider).toBe('google-gemini');
+    expect(fallbackProvider).toBe('forge-fallback');
+  });
 });
 
 it('documents that confirmed shell commands and prior effects are outside rollback guarantees',async()=>{
