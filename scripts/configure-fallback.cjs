@@ -2,13 +2,19 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
+function requiresApiKey(endpoint) {
+  if (['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname)) return false;
+  if (endpoint.hostname.includes('nvidia.com')) return true;
+  return false;
+}
+
 async function configureFallback({
   baseUrl = 'http://localhost:8790',
-  providerBaseUrl,
-  apiKey,
-  model,
+  providerBaseUrl = process.env.FALLBACK_BASE_URL,
+  apiKey = process.env.FALLBACK_API_KEY,
+  model = process.env.FALLBACK_MODEL,
   fetchImpl = fetch,
-}) {
+} = {}) {
   if (!providerBaseUrl?.trim()) throw new Error('FALLBACK_BASE_URL is required.');
   if (!model?.trim()) throw new Error('FALLBACK_MODEL is required.');
 
@@ -21,6 +27,11 @@ async function configureFallback({
   if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
     throw new Error('FALLBACK_BASE_URL must be an HTTP(S) URL without embedded credentials or query parameters.');
   }
+
+  if (requiresApiKey(endpoint) && !apiKey?.trim()) {
+    throw new Error(`FALLBACK_API_KEY is required for ${endpoint.hostname.includes('nvidia.com') ? 'NVIDIA NIM' : endpoint.hostname}. Enter it locally; never put it in the repository or chat.`);
+  }
+
   const normalizedBaseUrl = endpoint.toString().replace(/\/+$/, '');
   const providerName = 'forge-fallback';
   const modelName = model.trim();

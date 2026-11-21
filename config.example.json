@@ -5,6 +5,33 @@
   "forge.fallbackAgentName": "forge-agent-fallback",
   "providers": [
     {
+      "type": "google",
+      "name": "google-gemini",
+      "auth": {
+        "api_key": "<gemini-api-key-placeholder-only>"
+      },
+      "models": [
+        {
+          "name": "gemini-3-5-flash",
+          "model_id": "gemini-3-5-flash"
+        }
+      ]
+    },
+    {
+      "type": "custom",
+      "name": "forge-fallback",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "auth": {
+        "api_key": "<nvidia-nim-api-key-placeholder-only>"
+      },
+      "models": [
+        {
+          "name": "<nvidia-model-name-placeholder>",
+          "model_id": "<nvidia-model-id-placeholder>"
+        }
+      ]
+    },
+    {
       "type": "custom",
       "name": "groq",
       "base_url": "http://127.0.0.1:8791/v1",
@@ -14,21 +41,7 @@
           "model_id": "openai/gpt-oss-120b"
         }
       ]
-    },
-    {
-      "type": "custom",
-      "name": "forge-fallback",
-      "base_url": "https://api.example.com/v1",
-      "auth": {
-        "api_key": "<optional-placeholder-only>"
-      },
-      "models": [
-        {
-          "name": "<model-name>",
-          "model_id": "<model-id>"
-        }
-      ]
     }
   ],
-  "credentialSetup": "Run scripts/configure-groq.ps1 locally. For an optional second provider, set FALLBACK_BASE_URL and FALLBACK_MODEL, optionally set FALLBACK_API_KEY, then run node scripts/configure-fallback.cjs. Credentials are stored by TrueForge, not in this file."
+  "credentialSetup": "Configure Google Gemini provider in TrueForge for the primary and inline models. For the fallback provider (NVIDIA NIM), set FALLBACK_BASE_URL (https://integrate.api.nvidia.com/v1), FALLBACK_MODEL (e.g. meta/llama-3.3-70b-instruct) and FALLBACK_API_KEY, then run node scripts/configure-fallback.cjs. Groq is optional. Credentials are stored by TrueForge, not in this file."
 }
