@@ -4,6 +4,9 @@ import { randomBytes } from 'node:crypto';
 import type { ReviewRequest, ReviewUi } from './approvals';
 import { applyHunks } from './hunks';
 import { closeProposalTabs, type ProposalProvider } from './proposalProvider';
+import { getDestructiveWarning } from './commandWarning';
+
+export { getDestructiveWarning };
 
 type FromWebview = { type: 'toggle'; id: number; accepted: boolean } | { type: 'all'; accepted: boolean } | { type: 'confirm' } | { type: 'cancel' };
 
@@ -68,9 +71,19 @@ export class ReviewPanel implements ReviewUi {
     if (signal.aborted) return Promise.resolve(false);
     return new Promise(resolve => {
       const picker = vscode.window.createQuickPick();
-      picker.title = 'Forge: approve shell command (runs with your user permissions)';
-      picker.placeholder = command;
-      picker.items = [{ label: 'Cancel' }, { label: 'Run', description: command }];
+      const warning = getDestructiveWarning(command);
+      if (warning) {
+        picker.title = `⚠️ WARNING: ${warning} (runs with your user permissions)`;
+        picker.placeholder = `⚠️ ${warning}: ${command}`;
+        picker.items = [
+          { label: 'Cancel', description: 'Decline this command' },
+          { label: 'Run', description: command, detail: `⚠️ WARNING: ${warning}` },
+        ];
+      } else {
+        picker.title = 'Forge: approve shell command (runs with your user permissions)';
+        picker.placeholder = command;
+        picker.items = [{ label: 'Cancel' }, { label: 'Run', description: command }];
+      }
       let finished = false;
       const finish = (allow: boolean) => {
         if (finished) return;
