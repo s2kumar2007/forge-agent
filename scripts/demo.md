@@ -14,13 +14,27 @@ This script guides the official demonstration video and local reproduction again
 1. Follow README instructions: `npm ci`, `npm run typecheck`, `npm test`, `npm run build`.
 2. Start TrueForge on `http://localhost:8790` with outbound host allowlist:
    ```bash
-   OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1"]' npx @truefoundry/trueforge@0.182.0
+   OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1","integrate.api.nvidia.com"]' npx @truefoundry/trueforge@0.182.0
    ```
 3. Configure model providers locally without committing credentials:
-   - In TrueForge (`http://localhost:8790`), configure the primary provider `google-gemini` with your Gemini API key.
-   - Configure the fallback provider `forge-fallback` (NVIDIA NIM with `mistralai/mistral-large-4-1t-a52b`):
-     - Windows PowerShell: `$env:FALLBACK_API_KEY="<your-key>"; node scripts/configure-fallback.cjs`
-     - macOS/Linux: `FALLBACK_API_KEY="<your-key>" node scripts/configure-fallback.cjs`
+   - In TrueForge (`http://localhost:8790` -> Settings -> Model Providers), configure fallback provider `google-gemini` with your Gemini API key and ensure `gemini-3-8-flash` is enabled.
+   - Launch extension once (press F5) to register the `forge-editor` MCP server.
+   - Configure primary provider `forge-nvidia` (NVIDIA NIM with `nvidia/nemotron-3.5-lightning-30b-a3b`):
+     - Windows PowerShell:
+       ```powershell
+       $env:PROVIDER_BASE_URL="https://integrate.api.nvidia.com/v1"
+       $env:PROVIDER_MODEL="nvidia/nemotron-3.5-lightning-30b-a3b"
+       $env:PROVIDER_API_KEY="<your-nvidia-nim-api-key>"
+       node scripts/configure-provider.cjs
+       ```
+     - macOS/Linux:
+       ```bash
+       PROVIDER_BASE_URL="https://integrate.api.nvidia.com/v1" \
+       PROVIDER_MODEL="nvidia/nemotron-3.5-lightning-30b-a3b" \
+       PROVIDER_API_KEY="<your-nvidia-nim-api-key>" \
+       node scripts/configure-provider.cjs
+       ```
+   - Reload extension (`Ctrl+R` in extension host).
 4. Clone Flask repository and checkout tag 3.1.3:
    ```bash
    git clone https://github.com/pallets/flask.git
@@ -96,7 +110,7 @@ This script guides the official demonstration video and local reproduction again
 
 ## Task C — Resilience and failure handling
 
-1. In TrueForge settings, make the primary provider unreachable (e.g. by setting an invalid API key in google-gemini provider settings) while keeping the fallback provider valid.
+1. In TrueForge settings, make the primary provider unreachable (e.g. by setting an invalid API key for `forge-nvidia`) while keeping the fallback provider (`google-gemini`) valid.
 2. Repeat the exact Task A inline-edit request above on the selected get_debug_flag function.
 3. Observe initial retry notice with bounded backoff, followed by the takeover notice: `Primary model failed, using fallback`.
 4. Observe the request completing through a fresh session on the fallback model.
@@ -117,4 +131,4 @@ npm test
 npm run build
 ```
 
-All 184 tests pass across 23 test files.
+All 192 tests pass across 24 test files.

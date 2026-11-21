@@ -25,7 +25,7 @@ Forge Agent coordinates between VS Code and TrueForge using an asynchronous clie
   3. `search_workspace`: Text and symbol search powered by ripgrep with ranking heuristics.
   4. `propose_write`: Virtual diff creation supporting whole files or exact-anchor replacements.
   5. `run_command`: Workspace-root shell command execution with cancellation and process-tree termination.
-- **TrueForge harness features**: Preloaded tool schemas (`preload: true`) avoid discovery round-trips. Tool approval gates enforce user confirmation for `propose_write` and `run_command`. Context compaction triggers compress older conversation history (60000 tokens for Gemini, 30000 for NVIDIA NIM fallback). Dynamic subagents are enabled in configuration. The chat panel surfaces the TrueForge session ID (`Session: <id>`), subagent lifecycle events (`Subagent <title> started/finished`), and compaction notifications (`Context compacted`).
+- **TrueForge harness features**: Preloaded tool schemas (`preload: true`) avoid discovery round-trips. Tool approval gates enforce user confirmation for `propose_write` and `run_command`. Context compaction triggers compress older conversation history (40000 tokens for NVIDIA NIM primary, 30000 for Gemini fallback). Dynamic subagents are enabled in configuration. The chat panel surfaces the TrueForge session ID (`Session: <id>`), subagent lifecycle events (`Subagent <title> started/finished`), and compaction notifications (`Context compacted`).
 
 ## 4. How context is selected
 
@@ -41,13 +41,13 @@ Agent mode automatically gathers workspace context using a multi-stage retrieval
 ## 5. Model setup
 
 - **Configured models**:
-  - Primary agent (`forge-agent`): Google Gemini `google-gemini/gemini-3-8-flash` (manifest: `google-gemini/gemini-3-8-flash`), temperature 0.2, serialized tool calls (`parallel_tool_calls: false`), `reasoning_effort: "low"`, `max_tokens: 10000`, context compaction trigger `60000`.
-  - Inline edit agent (`forge-inline`): Google Gemini `google-gemini/gemini-3-8-flash` (manifest: `google-gemini/gemini-3-8-flash`), temperature 0.2.
-  - Fallback agent (`forge-agent-fallback`): NVIDIA NIM `mistralai/mistral-large-4-1t-a52b` (manifest: `forge-fallback/mistral-large-4-1t-a52b`), temperature 0.2, serialized tool calls (`parallel_tool_calls: false`), `max_tokens: 8000`, context compaction trigger `30000`.
-- **Where they run**: Primary and inline models execute on Google cloud APIs (`google-gemini/gemini-3-8-flash`). Fallback model executes on NVIDIA NIM cloud APIs (`forge-fallback/mistral-large-4-1t-a52b`). TrueForge (`http://localhost:8790`) runs locally. (The Groq adapter `scripts/groq-adapter.cjs` is optional and not run on the default path).
+  - Primary agent (`forge-agent`): NVIDIA NIM `nvidia/nemotron-3.5-lightning-30b-a3b` (manifest: `forge-nvidia/nemotron-3-5-lightning-30b-a3b`), temperature 0.2, serialized tool calls (`parallel_tool_calls: false`), `max_tokens: 8000`, context compaction trigger `40000`.
+  - Inline edit agent (`forge-inline`): NVIDIA NIM `nvidia/nemotron-3.5-lightning-30b-a3b` (manifest: `forge-nvidia/nemotron-3-5-lightning-30b-a3b`), temperature 0.2.
+  - Fallback agent (`forge-agent-fallback`): Google Gemini `google-gemini/gemini-3-8-flash` (manifest: `google-gemini/gemini-3-8-flash`), temperature 0.2, serialized tool calls (`parallel_tool_calls: false`), `max_tokens: 8000`, context compaction trigger `30000`.
+- **Where they run**: Primary and inline models execute on NVIDIA NIM cloud APIs (`forge-nvidia/nemotron-3-5-lightning-30b-a3b`). Fallback model executes on Google Gemini cloud APIs (`google-gemini/gemini-3-8-flash`). TrueForge (`http://localhost:8790`) runs locally. (The Groq adapter `scripts/groq-adapter.cjs` is optional and not run on the default path).
 - **Cost**: Google Gemini and NVIDIA NIM free tiers, approximately INR 0.
-- **Model switching**: Users can switch models directly in TrueForge settings or agent manifests. The setup helper (`node scripts/configure-fallback.cjs`) configures NVIDIA NIM (or an alternate OpenAI-compatible provider) for `forge-agent-fallback`.
-- **Fallback behavior**: The resilience controller intercepts permanent errors (HTTP 401, 403, 413) and immediately switches to `forge-agent-fallback` in a fresh session on the second provider (NVIDIA NIM) without retry delay. Transient errors (HTTP 429, 500, 502, 503, network disconnects) retry with exponential backoff up to 12s before switching. To prevent duplicate file modifications, automatic retry and fallback are disabled once a tool approval has been granted.
+- **Model switching**: Users can switch models directly via `node scripts/configure-provider.cjs` or in TrueForge settings and agent manifests. The setup script configures any OpenAI-compatible provider and updates target agents.
+- **Fallback behavior**: The resilience controller intercepts permanent errors (HTTP 401, 403, 413) and immediately switches to `forge-agent-fallback` in a fresh session on the second provider (Google Gemini) without retry delay. Transient errors (HTTP 429, 500, 502, 503, network disconnects) retry with exponential backoff up to 12s, capped at 30s total fallback wait before switching. To prevent duplicate file modifications, automatic retry and fallback are disabled once a tool approval has been granted.
 
 ## 6. Scorecard
 
@@ -58,16 +58,16 @@ Agent mode automatically gathers workspace context using a multi-stage retrieval
 | A3 Streaming and cancellation | [TODO: mm:ss] | Responsive UI streaming, immediate Stop cancellation, and clean workspace preservation. |
 | B1 Context assembly | [TODO: mm:ss] | Ranked keyword and importer retrieval packed within a deterministic token budget. |
 | B2 Diff safety | [TODO: mm:ss] | Immutable diff assembly, single-use approval tokens, and multi-step undo. |
-| B3 Resilience | [TODO: mm:ss] | Fail-fast permanent error detection, bounded backoff, and clean fallback sessions on an independent second provider (NVIDIA NIM). |
+| B3 Resilience | [TODO: mm:ss] | Fail-fast permanent error detection, bounded backoff, and clean fallback sessions on an independent second provider (Google Gemini). |
 | B4 TrueForge integration depth | [TODO: mm:ss] | TrueForge sessions and turns, loopback MCP tools, visible lifecycle events, and approval resumes. |
 | C1 Video | [TODO: mm:ss] | Four-minute demo demonstrating Tasks A, B, and C in order with TrueForge session visibility. |
 | C2 Write-up | [TODO: mm:ss] | Structured technical write-up covering architecture, context assembly, model setup, scorecard, and limitations. |
 
 ## 7. Tools used
 
-TrueForge 0.182.0, `@truefoundry/trueforge-sdk` 0.182.0, VS Code Extension API 1.90.0, `@modelcontextprotocol/sdk` 1.32.2, `@vscode/ripgrep` 1.18.0, `diff` 9.0.0, `zod` 4.6.7, TypeScript 7.0.2, esbuild 0.28.2, Vitest 5.0.5 (184 tests passing across 23 suites), Node.js 22.14+, Git, ReportLab. AI tools: GitHub Copilot, ChatGPT, and [TODO: confirm all AI tools].
+TrueForge 0.182.0, `@truefoundry/trueforge-sdk` 0.182.0, VS Code Extension API 1.90.0, `@modelcontextprotocol/sdk` 1.32.2, `@vscode/ripgrep` 1.18.0, `diff` 9.0.0, `zod` 4.6.7, TypeScript 7.0.2, esbuild 0.28.2, Vitest 5.0.5 (192 tests passing across 24 suites), Node.js 22.14+, Git, ReportLab. AI tools: GitHub Copilot, ChatGPT, and [TODO: confirm all AI tools].
 
 ## 8. Known limitations and what we would do with another month
 
-- **Known limitations**: `run_command` executes with host user permissions and is not an OS sandbox; approved command side-effects cannot be rolled back automatically. The custom undo stack persists up to 50 operations in workspaceState across extension reloads, but will refuse to overwrite files if subsequent external manual edits were made. Primary and fallback operate on independent providers (Google and NVIDIA), but both remain subject to their respective free-tier rate limits and quotas. Automatic retry stops after an approval is granted to prevent duplicate side effects. Context size uses a character-based heuristic (~4 chars/token). Dynamic subagents are enabled, but spawning depends on model execution.
+- **Known limitations**: `run_command` executes with host user permissions and is not an OS sandbox; approved command side-effects cannot be rolled back automatically. The custom undo stack persists up to 50 operations in workspaceState across extension reloads, but will refuse to overwrite files if subsequent external manual edits were made. Primary and fallback operate on independent providers (NVIDIA NIM and Google Gemini), but both remain subject to their respective free-tier rate limits and quotas (about 40 requests per minute on NVIDIA NIM, about 5 requests per minute on Google Gemini). Automatic retry stops after an approval is granted to prevent duplicate side effects. Context size uses a character-based heuristic (~4 chars/token). Dynamic subagents are enabled, but spawning depends on model execution.
 - **With another month**: Containerized command execution inside ephemeral Docker or WebAssembly sandboxes; persistent disk-backed undo journals surviving editor restarts; semantic AST and vector embedding retrieval alongside ripgrep; interactive in-diff adjustments during hunk review; and dynamic multi-provider latency-routed fallback pools.

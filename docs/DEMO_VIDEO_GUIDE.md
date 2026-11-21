@@ -48,7 +48,7 @@ npm run typecheck
 npm test
 npm run build
 ```
-*(Verify that all 184 tests pass).*
+*(Verify that all 192 tests pass).*
 
 ---
 
@@ -57,13 +57,13 @@ Open a dedicated terminal window and run:
 
 **Windows PowerShell:**
 ```powershell
-$env:OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1"]'
+$env:OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1","integrate.api.nvidia.com"]'
 npx @truefoundry/trueforge@0.182.0
 ```
 
 **macOS / Linux:**
 ```bash
-OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1"]' npx @truefoundry/trueforge@0.182.0
+OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1","integrate.api.nvidia.com"]' npx @truefoundry/trueforge@0.182.0
 ```
 *Leave this terminal running in the background. TrueForge will be available at `http://localhost:8790`.*
 
@@ -71,30 +71,36 @@ OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1"]' npx @truefoundry/trueforge@0.182.0
 
 ### Step 3: Configure Providers in TrueForge
 
-1. **Configure Google Gemini (Primary & Inline)**:
+1. **Configure Google Gemini (Fallback Provider)**:
    - Open browser: `http://localhost:8790`
    - Navigate to **Settings** → **Model Providers**.
-   - Add/edit provider **`google-gemini`**, enter your Gemini API key, and ensure `gemini-2-5-flash` is enabled.
+   - Add/edit provider **`google-gemini`**, enter your Gemini API key, and ensure `gemini-3-8-flash` is enabled.
 
-2. **Configure NVIDIA NIM (Fallback Provider)**:
+2. **Launch Extension Once**:
+   - Press **F5** in VS Code to start the extension host once so it registers the `forge-editor` MCP server.
+
+3. **Configure NVIDIA NIM (Primary & Inline Provider)**:
    - In a terminal in the `forge-agent` directory, run:
    
    **Windows PowerShell:**
    ```powershell
-   $env:FALLBACK_BASE_URL="https://integrate.api.nvidia.com/v1"
-   $env:FALLBACK_MODEL="mistralai/mistral-large-4-1t-a52b"
-   $env:FALLBACK_API_KEY="<your-nvidia-nim-api-key>"
-   node scripts/configure-fallback.cjs
+   $env:PROVIDER_BASE_URL="https://integrate.api.nvidia.com/v1"
+   $env:PROVIDER_MODEL="nvidia/nemotron-3.5-lightning-30b-a3b"
+   $env:PROVIDER_API_KEY="<your-nvidia-nim-api-key>"
+   node scripts/configure-provider.cjs
    ```
    
    **macOS / Linux:**
    ```bash
-   FALLBACK_BASE_URL="https://integrate.api.nvidia.com/v1" \
-   FALLBACK_MODEL="mistralai/mistral-large-4-1t-a52b" \
-   FALLBACK_API_KEY="<your-nvidia-nim-api-key>" \
-   node scripts/configure-fallback.cjs
+   PROVIDER_BASE_URL="https://integrate.api.nvidia.com/v1" \
+   PROVIDER_MODEL="nvidia/nemotron-3.5-lightning-30b-a3b" \
+   PROVIDER_API_KEY="<your-nvidia-nim-api-key>" \
+   node scripts/configure-provider.cjs
    ```
-   *Expected output: `Registered provider forge-fallback for model mistral-large-4-1t-a52b.`*
+   *Expected output: `Registered provider forge-nvidia for model nvidia/nemotron-3.5-lightning-30b-a3b as forge-nvidia/nemotron-3-5-lightning-30b-a3b; updated agents: forge-agent, forge-inline.`*
+
+4. **Reload Extension**:
+   - Press `Ctrl+R` (or `Cmd+R`) in the extension host.
 
 ---
 
@@ -237,8 +243,8 @@ pip install -e . "pytest<9" python-dotenv asgiref
 ### 🎬 TASK C: Resilience & Model Fallback (~50 sec)
 
 1. **Simulate Primary Provider Failure**:
-   - In browser at `http://localhost:8790` (TrueForge Settings → Model Providers → `google-gemini`):
-   - Temporarily change the Gemini API key to an invalid string like `invalid-test-key` and save. *(Keep `forge-fallback` valid).*
+   - In browser at `http://localhost:8790` (TrueForge Settings → Model Providers → `forge-nvidia`):
+   - Temporarily change the NVIDIA NIM API key to an invalid string like `invalid-test-key` and save. *(Keep `google-gemini` valid).*
 
 2. **Trigger Exact Task A Request**:
    - In `src/flask/helpers.py`, select the `get_debug_flag` function again.
@@ -252,7 +258,7 @@ pip install -e . "pytest<9" python-dotenv asgiref
    - Show the notification: bounded backoff retry notice.
    - Show the failover takeover notice:
      `Primary model failed, using fallback`
-   - Show the request completes smoothly in a fresh session using the NVIDIA NIM fallback model (`mistral-large-4-1t-a52b`).
+   - Show the request completes smoothly in a fresh session using the Google Gemini fallback model (`gemini-3-8-flash`).
 
 4. **Reject and Prove Clean Workspace**:
    - In the diff review, click **Reject / Close** (do not apply).
