@@ -10,7 +10,7 @@ function isAuthenticationFailure(err: unknown): boolean {
 
 function isNetworkFailure(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
-  return /\b(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT)\b|fetch failed|failed to fetch|network(?: error| failure|error)|socket hang up|connection (?:refused|reset|timed out)|timed out/i.test(message);
+  return /\b(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ESOCKETTIMEDOUT|EHOSTUNREACH|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT)\b|fetch failed|failed to fetch|network(?: error| failure|error)|socket hang up|connection (?:refused|reset|timed out)|connection timeout|timed out|\btimeout\b/i.test(message);
 }
 
 function isServerFailure(err: unknown): boolean {
@@ -21,6 +21,10 @@ function isServerFailure(err: unknown): boolean {
 function isPayloadTooLarge(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return /\b(?:HTTP\s*)?413\b|\bstatus(?:\s+code)?\s*[:=]?\s*413\b|payload too large|request too large|request entity too large/i.test(message);
+}
+
+export function isCircuitBreakerError(err: unknown): boolean {
+  return isAuthenticationFailure(err) || isNetworkFailure(err) || isServerFailure(err) || isPayloadTooLarge(err);
 }
 
 export interface ControllerDeps {
@@ -37,6 +41,8 @@ export interface ControllerDeps {
   sessionId?: string | (() => string | undefined);
   onSessionCreated?: (sessionId: string) => void;
   logError?: (err: unknown) => void;
+  now?: () => number;
+  circuitBreakerDurationMs?: number;
 }
 
 export function sanitizeReason(err: unknown): string {
@@ -75,10 +81,26 @@ export class AgentController {
   private abort = new AbortController();
   private sessionId: string | undefined;
   private approvedOperations = 0;
+  private primaryUnhealthyUntil = 0;
+  private primaryUnavailableNoticeShown = false;
+  private readonly circuitBreakerDurationMs: number;
+  private readonly now: () => number;
 
-  constructor(private d: ControllerDeps) {}
+  constructor(private d: ControllerDeps) {
+    this.circuitBreakerDurationMs = d.circuitBreakerDurationMs ?? 5 * 60 * 1000;
+    this.now = d.now ?? Date.now;
+  }
 
   get busy(): boolean { return this.running; }
+
+  isPrimaryHealthy(): boolean {
+    return this.now() >= this.primaryUnhealthyUntil;
+  }
+
+  resetCircuitBreaker(): void {
+    this.primaryUnhealthyUntil = 0;
+    this.primaryUnavailableNoticeShown = false;
+  }
 
   async run(
     request: string,
@@ -94,10 +116,28 @@ export class AgentController {
     let clientToolResponses = 0;
     this.d.onRunStart?.();
     const cfg = this.d.agents();
+    const primaryAgent = agentOverride ?? cfg.primary;
+    const fallbackAgent = cfg.fallback;
+    const isPrimaryHealthy = this.isPrimaryHealthy();
+
+    let chosenPrimary = primaryAgent;
+    let chosenFallback = fallbackAgent;
+
+    if (fallbackAgent && !isPrimaryHealthy) {
+      chosenPrimary = fallbackAgent;
+      chosenFallback = undefined;
+      if (!this.primaryUnavailableNoticeShown) {
+        ui.notice('Primary unavailable, using fallback');
+        this.primaryUnavailableNoticeShown = true;
+      }
+    }
+
+    let primaryFailed = false;
+
     try {
       const outcome = await runWithFallback<'done' | 'cancelled'>({
-        primary: agentOverride ?? cfg.primary,
-        fallback: cfg.fallback,
+        primary: chosenPrimary,
+        fallback: chosenFallback,
         retries: this.d.retries ?? 2,
         backoffMs: this.d.backoffMs ?? 1000,
         sleep: this.d.sleep ?? ((ms) => sleepForRetry(ms, this.abort.signal)),
@@ -110,13 +150,26 @@ export class AgentController {
           const reason = sanitizeReason(err);
           ui.notice(`Request to "${agent}" failed (${reason}), retrying (${n})...`);
         },
-        onFallback: () => {
+        onFallback: (err) => {
+          primaryFailed = true;
+          if (isCircuitBreakerError(err)) {
+            this.primaryUnhealthyUntil = this.now() + this.circuitBreakerDurationMs;
+            this.primaryUnavailableNoticeShown = false;
+          }
           const model = sanitizeReason(new Error(cfg.fallbackModel ?? cfg.fallback ?? 'fallback'));
           ui.notice(`Primary model failed, using fallback: ${model}`);
         },
       });
+      if (chosenPrimary === primaryAgent && !primaryFailed && outcome === 'done') {
+        this.primaryUnhealthyUntil = 0;
+        this.primaryUnavailableNoticeShown = false;
+      }
       ui.finished(outcome === 'cancelled' ? this.cancelInfo() : { status: 'done' });
     } catch (e) {
+      if (chosenPrimary === primaryAgent && isCircuitBreakerError(e)) {
+        this.primaryUnhealthyUntil = this.now() + this.circuitBreakerDurationMs;
+        this.primaryUnavailableNoticeShown = false;
+      }
       if (e instanceof CancelledError) ui.finished(this.cancelInfo());
       else {
         const base = e instanceof ForgeFailure ? e.message : `Forge could not complete the request (${sanitizeReason(e)}).`;

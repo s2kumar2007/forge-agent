@@ -428,4 +428,181 @@ describe('quota failure messages (ITEM 2)', () => {
     expect(ui.result?.message).toBe('Primary model failed (HTTP 500 Internal Server Error); fallback model failed (429 rate limit exceeded). No files were changed.');
     expect(gitStatus()).toBe('');
   });
+
+  describe('circuit breaker (ITEM 1)', () => {
+    it.each([
+      ['connection timeout', 'connect timeout after 5000ms'],
+      ['HTTP 401', 'HTTP 401 Unauthorized'],
+      ['HTTP 403', 'HTTP 403 Forbidden'],
+      ['HTTP 413', 'HTTP 413 Payload Too Large'],
+      ['HTTP 500', 'HTTP 500 Internal Server Error'],
+      ['HTTP 503', 'HTTP 503 Service Unavailable'],
+      ['ECONNREFUSED', 'connect ECONNREFUSED 127.0.0.1:8790'],
+    ])('marks primary unhealthy for 5 minutes after %s and routes new requests straight to fallback', async (_label, errorMsg) => {
+      let now = 100_000;
+      let primaryAttempts = 0;
+      let fallbackAttempts = 0;
+
+      const tf = new FakeTrueForge({
+        'forge-agent': [
+          () => {
+            primaryAttempts++;
+            throw new Error(errorMsg);
+          },
+          () => {
+            primaryAttempts++;
+            return [created(), delta('m2', 'Primary recovered'), done()];
+          },
+        ],
+        'forge-agent-fallback': [
+          () => {
+            fallbackAttempts++;
+            return [created(), delta('m1', 'Fallback 1'), done()];
+          },
+          () => {
+            fallbackAttempts++;
+            return [created(), delta('m2', 'Fallback 2'), done()];
+          },
+          () => {
+            fallbackAttempts++;
+            return [created(), delta('m3', 'Fallback 3'), done()];
+          },
+        ],
+      });
+
+      const { root } = tempRepo();
+      const approvals = new ReviewApprovals({ root, ui: { reviewHunks: async () => [], confirmCommand: async () => false, close() {} }, store: new DecisionStore(), readText: async () => undefined });
+      const ctl = new AgentController({
+        getClient: () => tf.client,
+        approvals,
+        agents: () => ({ primary: 'forge-agent', fallback: 'forge-agent-fallback' }),
+        retries: 2,
+        backoffMs: 1,
+        sleep: async () => {},
+        now: () => now,
+      });
+
+      // 1. Initial request: primary fails immediately with single attempt (no retry), falls back
+      const ui1 = new RecordingUi();
+      await ctl.run('req1', ui1);
+      expect(ui1.result?.status).toBe('done');
+      expect(ui1.text).toBe('Fallback 1');
+      expect(primaryAttempts).toBe(1); // Exactly 1 attempt on primary, no retries
+      expect(fallbackAttempts).toBe(1);
+
+      // 2. Second request within 5 minutes (e.g. 1 min later): sent straight to fallback
+      now += 60_000;
+      const ui2 = new RecordingUi();
+      await ctl.run('req2', ui2);
+      expect(ui2.result?.status).toBe('done');
+      expect(ui2.text).toBe('Fallback 2');
+      expect(primaryAttempts).toBe(1); // Primary was NOT attempted
+      expect(fallbackAttempts).toBe(2);
+      expect(ui2.notices).toContain('Primary unavailable, using fallback');
+
+      // 3. Third request within 5 minutes (e.g. 2 min later): notice is NOT repeated
+      now += 60_000;
+      const ui3 = new RecordingUi();
+      await ctl.run('req3', ui3);
+      expect(ui3.result?.status).toBe('done');
+      expect(ui3.text).toBe('Fallback 3');
+      expect(primaryAttempts).toBe(1); // Still not attempted
+      expect(fallbackAttempts).toBe(3);
+      expect(ui3.notices).not.toContain('Primary unavailable, using fallback');
+
+      // 4. After 5 minutes (300,001 ms after failure): primary is tried again
+      now += 240_001; // total 360,001 ms elapsed
+      const ui4 = new RecordingUi();
+      await ctl.run('req4', ui4);
+      expect(ui4.result?.status).toBe('done');
+      expect(ui4.text).toBe('Primary recovered');
+      expect(primaryAttempts).toBe(2); // Primary tried and succeeded
+      expect(fallbackAttempts).toBe(3);
+      expect(ctl.isPrimaryHealthy()).toBe(true);
+    });
+
+    it('resets circuit breaker on settings change and retries primary immediately', async () => {
+      let now = 100_000;
+      let primaryAttempts = 0;
+
+      const tf = new FakeTrueForge({
+        'forge-agent': [
+          () => {
+            primaryAttempts++;
+            throw new Error('connect ECONNREFUSED 127.0.0.1:8790');
+          },
+          () => {
+            primaryAttempts++;
+            return [created(), delta('m1', 'Recovered'), done()];
+          },
+        ],
+        'forge-agent-fallback': [
+          () => [created(), delta('m1', 'Fallback'), done()],
+        ],
+      });
+
+      const { root } = tempRepo();
+      const approvals = new ReviewApprovals({ root, ui: { reviewHunks: async () => [], confirmCommand: async () => false, close() {} }, store: new DecisionStore(), readText: async () => undefined });
+      const ctl = new AgentController({
+        getClient: () => tf.client,
+        approvals,
+        agents: () => ({ primary: 'forge-agent', fallback: 'forge-agent-fallback' }),
+        retries: 2,
+        sleep: async () => {},
+        now: () => now,
+      });
+
+      const ui1 = new RecordingUi();
+      await ctl.run('req1', ui1);
+      expect(primaryAttempts).toBe(1);
+      expect(ctl.isPrimaryHealthy()).toBe(false);
+
+      // User changes settings -> resetCircuitBreaker
+      ctl.resetCircuitBreaker();
+      expect(ctl.isPrimaryHealthy()).toBe(true);
+
+      // Immediately tries primary again (without waiting 5 minutes)
+      const ui2 = new RecordingUi();
+      await ctl.run('req2', ui2);
+      expect(primaryAttempts).toBe(2);
+      expect(ui2.text).toBe('Recovered');
+    });
+
+    it('preserves replay guard after write approval even if primary is unhealthy', async () => {
+      let now = 100_000;
+      const { root } = tempRepo();
+      const approvals = new ReviewApprovals({
+        root,
+        ui: { reviewHunks: async () => [1], confirmCommand: async () => true, close() {} },
+        store: new DecisionStore(),
+        readText: async () => 'old content',
+      });
+      const tf = new FakeTrueForge({
+        'forge-agent': [
+          () => { throw new Error('HTTP 500 Internal Server Error'); },
+        ],
+        'forge-agent-fallback': [
+          // First call: proposal accepted
+          () => [created(), toolMsg('m1', 'tc1', 'propose_write', { path: 'f.txt', new_content: 'new content', rationale: 'r' }), approvalRequired('tc1', 'm1'), done()],
+          // Resume turn: drops connection
+          () => { throw new Error('SSE drop after approved write'); },
+        ],
+      });
+
+      const ctl = new AgentController({
+        getClient: () => tf.client,
+        approvals,
+        agents: () => ({ primary: 'forge-agent', fallback: 'forge-agent-fallback' }),
+        retries: 2,
+        sleep: async () => {},
+        now: () => now,
+      });
+
+      const ui = new RecordingUi();
+      await ctl.run('modify', ui);
+
+      expect(ui.result?.status).toBe('error');
+      expect(ui.result?.message).toContain('automatic replay was skipped');
+    });
+  });
 });

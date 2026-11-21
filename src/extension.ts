@@ -55,6 +55,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   });
 
   ctx.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('forge')) {
+        controller.resetCircuitBreaker();
+      }
+    }),
     vscode.commands.registerCommand('forge.openPanel', () => { if (ctxDeps) ChatPanel.show(ctx, controller, ctxDeps); else void vscode.window.showWarningMessage('Forge: open a folder first.'); }),
     vscode.commands.registerCommand('forge.inlineEdit', () => inlineEdit(controller, 'forge-inline')),
     vscode.commands.registerCommand('forge.undoLast', async () => { if (api) void vscode.window.showInformationMessage('Forge: ' + await api.undoLast()); }),
