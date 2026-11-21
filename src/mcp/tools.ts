@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { EditorApi } from '../workspace/types';
 import { PathError, isSecretPath, resolveInsideReal, toRel } from '../workspace/paths';
 import { rankSymbols, rankTextHits } from '../context/rank';
+import { extractOutline } from '../context/symbols';
 import { materializeWrite } from '../review/proposal';
 
 const MAX_READ_BYTES = 1_000_000;
@@ -69,10 +70,10 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
 
   mcp.registerTool('read_file', {
     description: 'Read a workspace file, optionally only lines start..end (1-based, inclusive; maximum 40 lines recommended, up to 80 lines absolute limit). Prefer reading short slices.',
-    inputSchema: { path: z.string(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() },
+    inputSchema: { path: z.string(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional(), outline: z.boolean().optional() },
     annotations: { readOnlyHint: true },
-  }, ({ path, start, end }) => guarded(async () => {
-    const dup = checkDuplicateCall('read_file', { path, start, end });
+  }, ({ path, start, end, outline }) => guarded(async () => {
+    const dup = checkDuplicateCall('read_file', { path, start, end, outline });
     if (dup) return dup;
     const budgetError = checkExplorationBudget();
     if (budgetError) return budgetError;
@@ -82,6 +83,11 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     if (isSecretPath(rel)) return fail('blocked: secret-like file');
     const text = await api.readText(abs);
     if (text === undefined) return fail(`File not found: ${path}`);
+    if (outline) {
+      const symbols = extractOutline(text, rel).slice(0, 200);
+      if (symbols.length === 0) return ok(`${rel} outline: no definitions found.`);
+      return ok(`${rel} outline (${symbols.length} definition${symbols.length === 1 ? '' : 's'}):\n` + symbols.map((s) => `${s.kind} ${s.name} line ${s.line}`).join('\n'));
+    }
     if (Buffer.byteLength(text) > MAX_READ_BYTES && start === undefined) return fail('File is larger than 1MB; request a line range with start/end.');
     const lines = text.split('\n');
     if (lines.length > MAX_READ_LINES && (start === undefined || end === undefined)) return fail(`File has ${lines.length} lines; request a start/end range of at most ${MAX_READ_LINES} lines.`);

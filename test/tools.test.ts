@@ -191,3 +191,99 @@ describe('loop breaker (ITEM 3)', () => {
     expect(text(cmd3)).toContain('ran echo test');
   });
 });
+
+describe('read_file outline option (ITEM 1)', () => {
+  it('returns top-level and class-level definitions with name, kind, and start line', async () => {
+    resetToolRunState();
+    const pyCode = [
+      'def top_function():',
+      '    return 42',
+      '',
+      'class Calculator:',
+      '    def __init__(self):',
+      '        self.value = 0',
+      '    def add(self, x):',
+      '        def helper(): pass',
+      '        self.value += x',
+      '',
+      'async def async_worker():',
+      '    pass',
+    ].join('\n');
+    fs.writeFileSync(path.join(dir, 'calc.py'), pyCode);
+
+    const tsCode = [
+      'export interface User { id: string; }',
+      'export class UserService {',
+      '  getUser() { return null; }',
+      '  private helper() {}',
+      '}',
+      'export function getUserCount() { return 1; }',
+    ].join('\n');
+    fs.writeFileSync(path.join(dir, 'user.ts'), tsCode);
+
+    const c = await connect();
+
+    // Python outline
+    const pyRes: any = await c.callTool({ name: 'read_file', arguments: { path: 'calc.py', outline: true } });
+    expect(pyRes.isError).toBeFalsy();
+    const pyText = text(pyRes);
+    expect(pyText).toContain('calc.py outline');
+    expect(pyText).toContain('def top_function line 1');
+    expect(pyText).toContain('class Calculator line 4');
+    expect(pyText).toContain('def __init__ line 5');
+    expect(pyText).toContain('def add line 7');
+    expect(pyText).toContain('def async_worker line 11');
+    expect(pyText).not.toContain('helper'); // inner function inside method is not class-level
+
+    // TypeScript outline
+    const tsRes: any = await c.callTool({ name: 'read_file', arguments: { path: 'user.ts', outline: true } });
+    expect(tsRes.isError).toBeFalsy();
+    const tsText = text(tsRes);
+    expect(tsText).toContain('interface User line 1');
+    expect(tsText).toContain('class UserService line 2');
+    expect(tsText).toContain('method getUser line 3');
+    expect(tsText).toContain('method helper line 4');
+    expect(tsText).toContain('function getUserCount line 6');
+  });
+
+  it('caps outline at 200 entries', async () => {
+    resetToolRunState();
+    const manyDefs = Array.from({ length: 250 }, (_, i) => `def func_${i}(): pass`).join('\n');
+    fs.writeFileSync(path.join(dir, 'many.py'), manyDefs);
+
+    const c = await connect();
+    const res: any = await c.callTool({ name: 'read_file', arguments: { path: 'many.py', outline: true } });
+    expect(res.isError).toBeFalsy();
+    const out = text(res);
+    expect(out).toContain('200 definitions');
+    expect(out).toContain('def func_0 line 1');
+    expect(out).toContain('def func_199 line 200');
+    expect(out).not.toContain('def func_200 line 201');
+  });
+
+  it('counts outline as one read-only call toward exploration budget', async () => {
+    resetToolRunState();
+    setExplorationBudget(1);
+    const c = await connect();
+
+    // 1st call consumes the budget
+    const r1: any = await c.callTool({ name: 'read_file', arguments: { path: 'calc.py', outline: true } });
+    expect(r1.isError).toBeFalsy();
+
+    // 2nd call is blocked by exploration budget
+    const r2: any = await c.callTool({ name: 'read_file', arguments: { path: 'calc.py', start: 1, end: 2 } });
+    expect(r2.isError).toBe(true);
+    expect(text(r2)).toContain('Exploration budget reached');
+
+    setExplorationBudget(12);
+    resetToolRunState();
+  });
+
+  it('is backward compatible when outline is omitted or false', async () => {
+    resetToolRunState();
+    const c = await connect();
+    const r: any = await c.callTool({ name: 'read_file', arguments: { path: 'a.py', start: 1, end: 1 } });
+    expect(r.isError).toBeFalsy();
+    expect(text(r)).toContain('def hello():');
+  });
+});
