@@ -12,8 +12,8 @@
       },
       "models": [
         {
-          "name": "gemini-3-5-flash",
-          "model_id": "gemini-3-5-flash"
+          "name": "gemini-2-5-flash",
+          "model_id": "gemini-2.5-flash"
         }
       ]
     },
