@@ -44,12 +44,12 @@
         },
         "forge.agentName": {
           "type": "string",
-          "default": "forge-agent",
+          "default": "forge-agent-fallback",
           "description": "Primary TrueForge agent used by the panel."
         },
         "forge.fallbackAgentName": {
           "type": "string",
-          "default": "forge-agent-fallback",
+          "default": "forge-agent",
           "description": "Agent used when the primary fails (different model/provider)."
         },
         "forge.contextBudget": {

@@ -1,0 +1,4 @@
+{
+  "forge.agentName": "forge-agent-fallback",
+  "forge.fallbackAgentName": "forge-agent"
+}
