@@ -2,6 +2,19 @@
 export class ForgeFailure extends Error {}
 /** Raised when the user cancelled while we were waiting/backing off. */
 export class CancelledError extends Error {}
+/** Raised when TrueForge reaches its agent iteration / step limit. */
+export class IterationLimitError extends Error {
+  constructor(message = 'The agent reached its step limit before finishing.') {
+    super(message);
+    this.name = 'IterationLimitError';
+  }
+}
+
+export function isIterationLimitError(err: unknown): boolean {
+  if (err instanceof IterationLimitError) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /iteration limit/i.test(message);
+}
 
 export interface FallbackOptions<T> {
   primary: string;
@@ -93,6 +106,9 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
         if (a === 0) primaryErr = e;
         else fallbackErr = e;
         if (o.isCancelled()) throw new CancelledError();
+        if (isIterationLimitError(e)) {
+          throw e instanceof IterationLimitError ? e : new IterationLimitError(e instanceof Error ? e.message : String(e));
+        }
         if (o.canRetry && !o.canRetry()) throw new ForgeFailure('The run stopped after an approved operation; automatic replay was skipped.');
         if (a === 0 && o.shouldFallbackImmediately?.(e)) break;
 

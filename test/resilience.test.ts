@@ -604,5 +604,55 @@ describe('quota failure messages (ITEM 2)', () => {
       expect(ui.result?.status).toBe('error');
       expect(ui.result?.message).toContain('automatic replay was skipped');
     });
+
+    it('classifies iteration limit without falling back, tripping breaker, or retrying (ITEM 1)', async () => {
+      let now = 100_000;
+      let primaryCalls = 0;
+      let fallbackCalls = 0;
+
+      const tf = new FakeTrueForge({
+        'forge-agent': [
+          () => {
+            primaryCalls++;
+            return [created(), errorDone('You have reached iteration limit of 60, please request again')];
+          },
+        ],
+        'forge-agent-fallback': [
+          () => {
+            fallbackCalls++;
+            return [created(), delta('m1', 'Fallback should not run'), done()];
+          },
+        ],
+      });
+
+      const { root } = tempRepo();
+      const approvals = new ReviewApprovals({
+        root,
+        ui: { reviewHunks: async () => [], confirmCommand: async () => false, close() {} },
+        store: new DecisionStore(),
+        readText: async () => undefined,
+      });
+
+      const ctl = new AgentController({
+        getClient: () => tf.client,
+        approvals,
+        agents: () => ({ primary: 'forge-agent', fallback: 'forge-agent-fallback' }),
+        retries: 2,
+        sleep: async () => {},
+        now: () => now,
+      });
+
+      const ui = new RecordingUi();
+      await ctl.run('long exploration task', ui);
+
+      expect(primaryCalls).toBe(1);
+      expect(fallbackCalls).toBe(0);
+      expect(ctl.isPrimaryHealthy()).toBe(true);
+      expect(ui.result).toEqual({
+        status: 'error',
+        message: 'The agent reached its step limit before finishing. No files were changed. You can run the request again.',
+      });
+      expect(ui.notices).toEqual([]);
+    });
   });
 });

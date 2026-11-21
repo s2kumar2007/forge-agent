@@ -1,7 +1,7 @@
 import type { TrueForge, TrueForgeApi } from '@truefoundry/trueforge-sdk';
 import { describeToolCall, runTurn, toolName } from '../forge/turnRunner';
 import type { AgentUi, ApprovalHandler } from './types';
-import { CancelledError, ForgeFailure, runWithFallback } from './resilience';
+import { CancelledError, ForgeFailure, IterationLimitError, isIterationLimitError, runWithFallback } from './resilience';
 
 function isAuthenticationFailure(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -24,6 +24,7 @@ function isPayloadTooLarge(err: unknown): boolean {
 }
 
 export function isCircuitBreakerError(err: unknown): boolean {
+  if (isIterationLimitError(err)) return false;
   return isAuthenticationFailure(err) || isNetworkFailure(err) || isServerFailure(err) || isPayloadTooLarge(err);
 }
 
@@ -166,6 +167,13 @@ export class AgentController {
       }
       ui.finished(outcome === 'cancelled' ? this.cancelInfo() : { status: 'done' });
     } catch (e) {
+      if (isIterationLimitError(e)) {
+        ui.finished({
+          status: 'error',
+          message: 'The agent reached its step limit before finishing. No files were changed. You can run the request again.',
+        });
+        return;
+      }
       if (chosenPrimary === primaryAgent && isCircuitBreakerError(e)) {
         this.primaryUnhealthyUntil = this.now() + this.circuitBreakerDurationMs;
         this.primaryUnavailableNoticeShown = false;
@@ -250,7 +258,11 @@ export class AgentController {
         },
       }, this.abort.signal);
       if (this.cancelled || res.status === 'cancelled') return 'cancelled';
-      if (res.status === 'error') throw new Error(res.error ?? 'the turn ended with an error');
+      if (res.status === 'error') {
+        const errMsg = res.error ?? 'the turn ended with an error';
+        if (isIterationLimitError(errMsg)) throw new IterationLimitError(errMsg);
+        throw new Error(errMsg);
+      }
 
       for (const ev of res.events.values()) {
         if (ev.type === 'model.message') {
