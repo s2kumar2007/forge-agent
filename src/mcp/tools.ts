@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { EditorApi } from '../workspace/types';
+import type { EditorApi, SearchHit } from '../workspace/types';
 import { PathError, isSecretPath, resolveInsideReal, toRel } from '../workspace/paths';
 import { rankSymbols, rankTextHits } from '../context/rank';
 import { extractOutline } from '../context/symbols';
 import { materializeWrite } from '../review/proposal';
+import { detectTestCommand } from '../workspace/runCommand';
 
 const MAX_READ_BYTES = 1_000_000;
 const MAX_READ_LINES = 80;
@@ -20,6 +21,7 @@ async function guarded(fn: () => Promise<ToolResult>): Promise<ToolResult> {
 
 export interface ToolOptions {
   getExplorationBudget?: () => number;
+  includeAdvancedTools?: boolean;
 }
 
 let defaultExplorationBudget = 12;
@@ -208,57 +210,11 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
       if (hashContent(current) !== readHashes.get(abs)) {
         return fail(`Stale file: "${args.path}" was modified after it was read. Re-read the file before proposing changes.`);
       }
+      readHashes.delete(abs);
     }
     const candidate = materializeWrite(current, args);
     const res = await api.applyProposal(abs, candidate);
-    readHashes.set(abs, hashContent(candidate));
     return ok(res);
-  }));
-
-  mcp.registerTool('propose_changes', {
-    description: 'Propose atomic reviewed edits across multiple files in a single operation. Takes changes: [{ path, edits | new_content | search & replace | startLine & endLine & newText }], plus rationale. All files undergo hunk review before changes are applied.',
-    inputSchema: {
-      changes: z.array(z.object({
-        path: z.string(),
-        new_content: z.string().optional(),
-        newContent: z.string().optional(),
-        edits: z.array(z.object({
-          old_text: z.string().optional(),
-          new_text: z.string().optional(),
-          search: z.string().optional(),
-          replace: z.string().optional(),
-          startLine: z.number().int().optional(),
-          endLine: z.number().int().optional(),
-          newText: z.string().optional(),
-        })).min(1).max(20).optional(),
-        search: z.string().optional(),
-        replace: z.string().optional(),
-        startLine: z.number().int().optional(),
-        endLine: z.number().int().optional(),
-        newText: z.string().optional(),
-      })).min(1).max(20),
-      rationale: z.string(),
-    },
-  }, (args) => guarded(async () => {
-    const dup = checkDuplicateCall('propose_changes', args);
-    if (dup) return dup;
-    const results: string[] = [];
-    for (const change of args.changes) {
-      if (isSecretPath(change.path)) return fail(`blocked: secret-like file (${change.path})`);
-      const abs = await resolveInsideReal(root, change.path);
-      if (isSecretPath(toRel(root, abs))) return fail(`blocked: secret-like file (${change.path})`);
-      const current = await api.readText(abs);
-      if (current !== undefined && readHashes.has(abs)) {
-        if (hashContent(current) !== readHashes.get(abs)) {
-          return fail(`Stale file: "${change.path}" was modified after it was read. Re-read the file before proposing changes.`);
-        }
-      }
-      const candidate = materializeWrite(current, change);
-      const res = await api.applyProposal(abs, candidate);
-      readHashes.set(abs, hashContent(candidate));
-      results.push(`${toRel(root, abs)}: ${res}`);
-    }
-    return ok(`Applied changes to ${results.length} file(s):\n${results.join('\n')}`);
   }));
 
   mcp.registerTool('run_command', {
@@ -270,4 +226,153 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     const r = await api.runCommand(command);
     return ok(`exit code: ${r.exitCode ?? 'none'}${r.timedOut ? ' (timed out)' : ''}\n${r.output}`);
   }));
+
+  if (options?.includeAdvancedTools) {
+    mcp.registerTool('propose_changes', {
+      description: 'Propose atomic reviewed edits across multiple files in a single operation. Takes changes: [{ path, edits | new_content | search & replace | startLine & endLine & newText }], plus rationale. All files undergo hunk review before changes are applied.',
+      inputSchema: {
+        changes: z.array(z.object({
+          path: z.string(),
+          new_content: z.string().optional(),
+          newContent: z.string().optional(),
+          edits: z.array(z.object({
+            old_text: z.string().optional(),
+            new_text: z.string().optional(),
+            search: z.string().optional(),
+            replace: z.string().optional(),
+            startLine: z.number().int().optional(),
+            endLine: z.number().int().optional(),
+            newText: z.string().optional(),
+          })).min(1).max(20).optional(),
+          search: z.string().optional(),
+          replace: z.string().optional(),
+          startLine: z.number().int().optional(),
+          endLine: z.number().int().optional(),
+          newText: z.string().optional(),
+        })).min(1).max(20),
+        rationale: z.string(),
+      },
+    }, (args) => guarded(async () => {
+      const dup = checkDuplicateCall('propose_changes', args);
+      if (dup) return dup;
+      const results: string[] = [];
+      for (const change of args.changes) {
+        if (isSecretPath(change.path)) return fail(`blocked: secret-like file (${change.path})`);
+        const abs = await resolveInsideReal(root, change.path);
+        if (isSecretPath(toRel(root, abs))) return fail(`blocked: secret-like file (${change.path})`);
+        const current = await api.readText(abs);
+        if (current !== undefined && readHashes.has(abs)) {
+          if (hashContent(current) !== readHashes.get(abs)) {
+            return fail(`Stale file: "${change.path}" was modified after it was read. Re-read the file before proposing changes.`);
+          }
+          readHashes.delete(abs);
+        }
+        const candidate = materializeWrite(current, change);
+        const res = await api.applyProposal(abs, candidate);
+        results.push(`${toRel(root, abs)}: ${res}`);
+      }
+      return ok(`Applied changes to ${results.length} file(s):\n${results.join('\n')}`);
+    }));
+
+  mcp.registerTool('search_symbols', {
+    description: 'Search workspace symbols (functions, classes, methods, variables). Results include definition line and 6-line code snippet.',
+    inputSchema: { query: z.string().min(1), max_results: z.number().int().min(1).max(50).default(15) },
+    annotations: { readOnlyHint: true },
+  }, ({ query, max_results }) => guarded(async () => {
+    const dup = checkDuplicateCall('search_symbols', { query, max_results });
+    if (dup) return dup;
+    const budgetError = checkExplorationBudget();
+    if (budgetError) return budgetError;
+    const rawHits = (await api.searchSymbols(query, 100)).filter((s) => !isSecretPath(s.path));
+    const ranked = rankSymbols(rawHits, query, max_results);
+    if (ranked.length === 0) return ok('No symbols found.');
+    const formatted = await Promise.all(ranked.map(async (s) => {
+      let hitText = `${s.path}:${s.line}  ${s.kind} ${s.name}  -- why: ${s.why}`;
+      try {
+        const abs = await resolveInsideReal(root, s.path);
+        if (!isSecretPath(toRel(root, abs))) {
+          const text = await api.readText(abs);
+          if (text) {
+            const lines = text.split(/\r?\n/);
+            if (s.line >= 1 && s.line <= lines.length) {
+              const startLine = s.line;
+              const endLine = Math.min(lines.length, startLine + 6);
+              const snippet = lines.slice(startLine - 1, endLine).map((l, idx) => `  ${startLine + idx}: ${l.slice(0, 240)}`).join('\n');
+              if (snippet) hitText += `\n${snippet}`;
+            }
+          }
+        }
+      } catch {}
+      return hitText;
+    }));
+    return ok(formatted.join('\n'));
+  }));
+
+  mcp.registerTool('find_references', {
+    description: 'Find references or usages of a symbol across the workspace. Provide file path and either line number or symbol name.',
+    inputSchema: {
+      path: z.string(),
+      line: z.number().int().min(1).optional(),
+      symbol: z.string().optional(),
+      max_results: z.number().int().min(1).max(50).default(20),
+    },
+    annotations: { readOnlyHint: true },
+  }, ({ path, line, symbol, max_results }) => guarded(async () => {
+    const dup = checkDuplicateCall('find_references', { path, line, symbol, max_results });
+    if (dup) return dup;
+    const budgetError = checkExplorationBudget();
+    if (budgetError) return budgetError;
+    if (isSecretPath(path)) return fail('blocked: secret-like file');
+    const abs = await resolveInsideReal(root, path);
+    if (isSecretPath(toRel(root, abs))) return fail('blocked: secret-like file');
+    let hits: SearchHit[] = [];
+    if (api.findReferences) {
+      hits = await api.findReferences(abs, line, symbol, max_results);
+    } else if (symbol) {
+      const raw = await api.searchText(symbol, max_results);
+      hits = raw.filter((h) => !isSecretPath(h.path));
+    }
+    if (hits.length === 0) return ok('No references found.');
+    return ok(hits.map((h) => `${h.path}:${h.line}  ${h.text}`).join('\n'));
+  }));
+
+  mcp.registerTool('get_diagnostics', {
+    description: 'Get compiler/linter diagnostics (errors, warnings) for a file or the whole workspace.',
+    inputSchema: {
+      path: z.string().optional(),
+      severity: z.enum(['error', 'warning', 'all']).default('all'),
+    },
+    annotations: { readOnlyHint: true },
+  }, ({ path, severity }) => guarded(async () => {
+    const dup = checkDuplicateCall('get_diagnostics', { path, severity });
+    if (dup) return dup;
+    const budgetError = checkExplorationBudget();
+    if (budgetError) return budgetError;
+    let abs: string | undefined;
+    if (path) {
+      if (isSecretPath(path)) return fail('blocked: secret-like file');
+      abs = await resolveInsideReal(root, path);
+      if (isSecretPath(toRel(root, abs))) return fail('blocked: secret-like file');
+    }
+    if (!api.getDiagnostics) return ok('No diagnostics found (clean).');
+    const diags = await api.getDiagnostics(abs, severity);
+    if (diags.length === 0) return ok('No diagnostics found (clean).');
+    return ok(diags.map((d) => `[${d.severity.toUpperCase()}] ${d.path}:${d.line}:${d.column} - ${d.message}${d.source ? ` (${d.source})` : ''}`).join('\n'));
+  }));
+
+  mcp.registerTool('run_tests', {
+    description: 'Run test suite in the workspace. Auto-detects pytest or npm test. Requires user approval.',
+    inputSchema: {
+      framework: z.enum(['auto', 'pytest', 'npm', 'unittest', 'vitest']).default('auto'),
+      test_path: z.string().optional(),
+      filter: z.string().optional(),
+    },
+  }, ({ framework, test_path, filter }) => guarded(async () => {
+    const cmd = await detectTestCommand(root, framework, test_path, filter);
+    const dup = checkDuplicateCall('run_tests', { cmd });
+    if (dup) return dup;
+    const r = await api.runCommand(cmd);
+    return ok(`exit code: ${r.exitCode ?? 'none'}${r.timedOut ? ' (timed out)' : ''}\n${r.output}`);
+  }));
+  }
 }

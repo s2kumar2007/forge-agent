@@ -3,7 +3,7 @@ import { computeHunks, normalizeEol, type Hunk } from './hunks';
 import { materializeWrite } from './proposal';
 import { DecisionStore, proposalKey } from './decisions';
 import { PathError, resolveInsideReal, toRel } from '../workspace/paths';
-import { validateCommandPaths } from '../workspace/runCommand';
+import { validateCommandPaths, detectTestCommand } from '../workspace/runCommand';
 
 export interface ReviewRequest { relPath: string; rationale: string; oldText: string; newText: string; hunks: Hunk[]; isNew: boolean }
 
@@ -26,8 +26,16 @@ export class ReviewApprovals implements ApprovalHandler {
     if (signal.aborted) return { status: 'deny', reason: 'Cancelled.' };
     if (is(call.name, 'propose_write')) return this.decideWrite(call, signal);
     if (is(call.name, 'propose_changes')) return this.decideChanges(call, signal);
-    if (is(call.name, 'run_command')) {
-      const cmd = String(call.args.command ?? '');
+    if (is(call.name, 'run_command') || is(call.name, 'run_tests')) {
+      let cmd = String(call.args.command ?? '');
+      if (is(call.name, 'run_tests')) {
+        cmd = await detectTestCommand(
+          this.d.root,
+          call.args.framework ? String(call.args.framework) : undefined,
+          call.args.test_path ? String(call.args.test_path) : undefined,
+          call.args.filter ? String(call.args.filter) : undefined,
+        );
+      }
       if (!cmd) return { status: 'deny', reason: 'Empty command.' };
       try { await validateCommandPaths(this.d.root, cmd); } catch { return { status: 'deny', reason: 'Command references a path outside the workspace.' }; }
       const confirmed = await this.d.ui.confirmCommand(cmd, signal);

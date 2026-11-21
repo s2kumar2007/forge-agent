@@ -1,4 +1,5 @@
 import { spawn, execFile } from 'node:child_process';
+import * as fs from 'node:fs/promises';
 import type { RunResult } from './types';
 import { resolveInsideReal, PathError } from './paths';
 
@@ -55,4 +56,42 @@ export async function runShell(command: string, cwd: string, timeoutMs = 120_000
       resolve({ exitCode: code, output: truncateOutput(out), timedOut });
     });
   });
+}
+
+export async function detectTestCommand(root: string, framework?: string, testPath?: string, filter?: string): Promise<string> {
+  let fw = framework && framework !== 'auto' ? framework : undefined;
+  if (!fw) {
+    try {
+      const entries = await fs.readdir(root);
+      if (entries.includes('pytest.ini') || entries.includes('setup.cfg') || entries.includes('pyproject.toml') || entries.includes('tox.ini') || entries.includes('tests')) {
+        fw = 'pytest';
+      } else if (entries.includes('package.json')) {
+        fw = 'npm';
+      } else {
+        fw = 'pytest';
+      }
+    } catch {
+      fw = 'pytest';
+    }
+  }
+
+  if (fw === 'pytest') {
+    let cmd = 'pytest';
+    if (testPath) cmd += ` ${testPath}`;
+    if (filter) cmd += ` -k "${filter.replace(/"/g, '\\"')}"`;
+    return cmd;
+  }
+  if (fw === 'npm' || fw === 'vitest') {
+    let cmd = 'npm test';
+    if (filter) cmd += ` -- -t "${filter.replace(/"/g, '\\"')}"`;
+    else if (testPath) cmd += ` -- ${testPath}`;
+    return cmd;
+  }
+  if (fw === 'unittest') {
+    let cmd = 'python -m unittest';
+    if (testPath) cmd += ` ${testPath}`;
+    if (filter) cmd += ` -k "${filter.replace(/"/g, '\\"')}"`;
+    return cmd;
+  }
+  return 'pytest';
 }

@@ -31,12 +31,18 @@ describe('enhanced propose_write and stale file guard', () => {
   };
 
   beforeEach(async () => {
-    root = await fs.mkdtemp(path.join(os.tmpdir(), 'tools-test-'));
+    root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tools-test-')));
     resetToolRunState();
-    server = new McpServer({ name: 'test-editor', version: '1.0.0' });
-    registerEditorTools(server, mockApi);
     fileContent = 'line 1\nline 2\nline 3\n';
+    await fs.writeFile(path.join(root, 'file.txt'), fileContent);
     appliedProposal = undefined;
+    (mockApi as any).readText = async (abs: string) => {
+      const rel = path.relative(root, abs).replace(/\\/g, '/');
+      if (rel === 'file.txt') return fileContent;
+      return undefined;
+    };
+    server = new McpServer({ name: 'test-editor', version: '1.0.0' });
+    registerEditorTools(server, mockApi, { includeAdvancedTools: true });
   });
 
   async function callTool(name: string, args: Record<string, unknown>) {
@@ -121,5 +127,59 @@ describe('enhanced propose_write and stale file guard', () => {
     expect(res.content[0].text).toContain('Applied changes to 2 file(s)');
     expect(files['a.txt']).toBe('apricot\n');
     expect(files['b.txt']).toBe('blueberry\n');
+  });
+
+  it('supports search_symbols with snippets and secret file filtering', async () => {
+    (mockApi as any).searchSymbols = async () => [
+      { name: 'calculate_total', kind: 'function', path: 'file.txt', line: 1 },
+      { name: 'secret_fn', kind: 'function', path: '.env', line: 1 },
+    ];
+
+    const res = await callTool('search_symbols', { query: 'total' });
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text).toContain('file.txt:1');
+    expect(res.content[0].text).toContain('calculate_total');
+    expect(res.content[0].text).toContain('line 1');
+    expect(res.content[0].text).not.toContain('.env');
+  });
+
+  it('supports find_references with symbol usages and secret blocking', async () => {
+    (mockApi as any).findReferences = async (abs: string, line?: number, symbol?: string) => [
+      { path: 'file.txt', line: 2, text: 'const t = calculate_total();' },
+    ];
+
+    const res = await callTool('find_references', { path: 'file.txt', symbol: 'calculate_total' });
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text).toContain('file.txt:2');
+    expect(res.content[0].text).toContain('const t = calculate_total();');
+
+    const blockedRes = await callTool('find_references', { path: '.env', symbol: 'KEY' });
+    expect(blockedRes.isError).toBe(true);
+    expect(blockedRes.content[0].text).toContain('blocked: secret-like file');
+  });
+
+  it('supports get_diagnostics formatting and severity filtering', async () => {
+    (mockApi as any).getDiagnostics = async () => [
+      { path: 'file.txt', line: 3, column: 5, severity: 'error', message: 'Syntax error', source: 'tsc' },
+      { path: 'file.txt', line: 1, column: 1, severity: 'warning', message: 'Unused var', source: 'eslint' },
+    ];
+
+    const res = await callTool('get_diagnostics', { severity: 'all' });
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text).toContain('[ERROR] file.txt:3:5 - Syntax error (tsc)');
+    expect(res.content[0].text).toContain('[WARNING] file.txt:1:1 - Unused var (eslint)');
+  });
+
+  it('supports run_tests with auto-detection', async () => {
+    let executedCmd: string | undefined;
+    (mockApi as any).runCommand = async (cmd: string) => {
+      executedCmd = cmd;
+      return { exitCode: 0, output: '1 passed in 0.05s', timedOut: false };
+    };
+
+    const res = await callTool('run_tests', { framework: 'pytest', test_path: 'tests/test_helpers.py', filter: 'test_debug' });
+    expect(res.isError).toBeFalsy();
+    expect(executedCmd).toBe('pytest tests/test_helpers.py -k "test_debug"');
+    expect(res.content[0].text).toContain('1 passed in 0.05s');
   });
 });

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createRequire } from 'node:module';
-import type { DirEntry, EditorApi, RunResult, SearchHit, SymbolHit } from './types';
+import type { DiagnosticItem, DirEntry, EditorApi, RunResult, SearchHit, SymbolHit } from './types';
 import { rgSymbols, rgText } from './ripgrep';
 import { runShell } from './runCommand';
 import { resolveInside, resolveInsideReal, toRel, isSecretPath } from './paths';
@@ -72,6 +72,69 @@ export class VsCodeEditorApi implements EditorApi {
     // Python etc. often have no workspace symbol provider installed: fall back to definition-line search.
     if (hits.length === 0) hits = await rgSymbols(this.rgPath, this.rootDir, query, max);
     return hits;
+  }
+
+  async findReferences(abs: string, line?: number, symbol?: string, maxResults = 50): Promise<SearchHit[]> {
+    if (isSecretPath(toRel(this.rootDir, abs))) return [];
+    const uri = vscode.Uri.file(abs);
+    let hits: SearchHit[] = [];
+    if (line !== undefined && line >= 1) {
+      try {
+        const pos = new vscode.Position(line - 1, 0);
+        const locs = await vscode.commands.executeCommand<vscode.Location[]>(
+          'vscode.executeReferenceProvider',
+          uri,
+          pos,
+        );
+        if (locs && Array.isArray(locs)) {
+          for (const loc of locs) {
+            const rel = toRel(this.rootDir, loc.uri.fsPath);
+            if (!isSecretPath(rel)) {
+              const l = loc.range.start.line + 1;
+              const text = (await this.readText(loc.uri.fsPath))?.split(/\r?\n/)[l - 1] ?? '';
+              hits.push({ path: rel, line: l, text: text.trim() });
+            }
+          }
+        }
+      } catch { /* fallback to text search below */ }
+    }
+    if (hits.length === 0 && symbol) {
+      const raw = await this.searchText(symbol, maxResults);
+      hits = raw.filter((h) => !isSecretPath(h.path));
+    }
+    return hits.slice(0, maxResults);
+  }
+
+  async getDiagnostics(abs?: string, severity: 'error' | 'warning' | 'all' = 'all'): Promise<DiagnosticItem[]> {
+    const items: DiagnosticItem[] = [];
+    const entries = abs
+      ? [[vscode.Uri.file(abs), vscode.languages.getDiagnostics(vscode.Uri.file(abs))] as const]
+      : vscode.languages.getDiagnostics();
+
+    for (const [uri, diags] of entries) {
+      if (uri.scheme !== 'file') continue;
+      const rel = toRel(this.rootDir, uri.fsPath);
+      if (isSecretPath(rel)) continue;
+      for (const d of diags) {
+        let sev: DiagnosticItem['severity'] = 'info';
+        if (d.severity === vscode.DiagnosticSeverity.Error) sev = 'error';
+        else if (d.severity === vscode.DiagnosticSeverity.Warning) sev = 'warning';
+        else if (d.severity === vscode.DiagnosticSeverity.Hint) sev = 'hint';
+
+        if (severity === 'error' && sev !== 'error') continue;
+        if (severity === 'warning' && sev !== 'error' && sev !== 'warning') continue;
+
+        items.push({
+          path: rel,
+          line: d.range.start.line + 1,
+          column: d.range.start.character + 1,
+          severity: sev,
+          message: d.message,
+          source: d.source,
+        });
+      }
+    }
+    return items;
   }
 
   async runCommand(command: string): Promise<RunResult> {
