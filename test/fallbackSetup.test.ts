@@ -28,7 +28,7 @@ it('registers an unauthenticated OpenAI-compatible provider without adding auth'
     type: 'custom',
     name: 'forge-fallback',
     base_url: 'http://127.0.0.1:11434/v1',
-    models: [{ name: 'qwen2.5-coder', model_id: 'qwen2.5-coder' }],
+    models: [{ name: 'qwen2-5-coder', model_id: 'qwen2.5-coder' }],
   });
   expect(saved.manifest).not.toHaveProperty('auth');
   expect(result).not.toContain('key');
@@ -108,7 +108,7 @@ it('configures NVIDIA NIM as fallback provider using fake credentials without ex
     fetchImpl,
   });
 
-  expect(result).toBe('Registered provider forge-fallback for model meta/llama-3.3-70b-instruct.');
+  expect(result).toBe('Registered provider forge-fallback for model llama-3-3-70b-instruct.');
   expect(result).not.toContain('nvapi');
 
   // Verify provider payload
@@ -119,14 +119,14 @@ it('configures NVIDIA NIM as fallback provider using fake credentials without ex
     name: 'forge-fallback',
     base_url: 'https://integrate.api.nvidia.com/v1',
     auth: { api_key: 'nvapi-fake-test-key-12345' },
-    models: [{ name: 'meta/llama-3.3-70b-instruct', model_id: 'meta/llama-3.3-70b-instruct' }],
+    models: [{ name: 'llama-3-3-70b-instruct', model_id: 'meta/llama-3.3-70b-instruct' }],
   });
 
   // Verify agent payload
   const agentCall = calls.find((c) => c.url.includes('/api/v1/agents') && (c.method === 'POST' || c.method === 'PUT'))!;
   const agentBody = JSON.parse(agentCall.body!);
   expect(agentBody.name).toBe('forge-agent-fallback');
-  expect(agentBody.manifest.model.name).toBe('forge-fallback/meta/llama-3.3-70b-instruct');
+  expect(agentBody.manifest.model.name).toBe('forge-fallback/llama-3-3-70b-instruct');
 });
 
 it('reads FALLBACK_BASE_URL, FALLBACK_MODEL and FALLBACK_API_KEY from environment', async () => {
@@ -148,7 +148,7 @@ it('reads FALLBACK_BASE_URL, FALLBACK_MODEL and FALLBACK_API_KEY from environmen
     const providerBody = JSON.parse(providerCall.body!);
     expect(providerBody.manifest.base_url).toBe('https://integrate.api.nvidia.com/v1');
     expect(providerBody.manifest.auth).toEqual({ api_key: 'nvapi-env-fake-key' });
-    expect(providerBody.manifest.models[0].name).toBe('meta/llama-3.3-70b-instruct');
+    expect(providerBody.manifest.models[0].name).toBe('llama-3-3-70b-instruct');
   } finally {
     process.env = origEnv;
   }

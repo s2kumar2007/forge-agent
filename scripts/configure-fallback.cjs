@@ -8,6 +8,12 @@ function requiresApiKey(endpoint) {
   return false;
 }
 
+function toModelSlug(modelId) {
+  const base = modelId.includes('/') ? modelId.split('/').pop() : modelId;
+  const slug = base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return slug || 'default-model';
+}
+
 async function configureFallback({
   baseUrl = 'http://localhost:8790',
   providerBaseUrl = process.env.FALLBACK_BASE_URL,
@@ -34,11 +40,20 @@ async function configureFallback({
 
   const normalizedBaseUrl = endpoint.toString().replace(/\/+$/, '');
   const providerName = 'forge-fallback';
-  const modelName = model.trim();
+  const modelId = model.trim();
+  const modelSlug = toModelSlug(modelId);
   const key = apiKey?.trim() || undefined;
   const request = async (url, options = {}) => {
     const response = await fetchImpl(url, { ...options, signal: AbortSignal.timeout(20000) });
-    if (!response.ok) throw new Error(`TrueForge request failed (HTTP ${response.status}).`);
+    if (!response.ok) {
+      let detail = '';
+      try {
+        const text = await response.text();
+        const parsed = JSON.parse(text);
+        detail = parsed?.error?.message ? `: ${parsed.error.message}` : `: ${text}`;
+      } catch {}
+      throw new Error(`TrueForge request failed (HTTP ${response.status})${detail}.`);
+    }
     return response.status === 204 ? {} : response.json();
   };
 
@@ -53,8 +68,8 @@ async function configureFallback({
     base_url: normalizedBaseUrl,
     ...(key ? { auth: { api_key: key } } : {}),
     models: [
-      ...(existing?.manifest.models || []).filter((item) => item.name !== modelName),
-      { name: modelName, model_id: modelName, properties: {} },
+      ...(existing?.manifest.models || []).filter((item) => item.name !== modelSlug),
+      { name: modelSlug, model_id: modelId, properties: {} },
     ],
   };
   await request(baseUrl + '/api/v1/settings/model-providers', {
@@ -64,7 +79,7 @@ async function configureFallback({
   });
 
   const fallbackAgent = JSON.parse(await fs.readFile(path.join(__dirname, '..', 'agents', 'forge-agent-fallback.json'), 'utf8'));
-  fallbackAgent.manifest.model.name = `${providerName}/${modelName}`;
+  fallbackAgent.manifest.model.name = `${providerName}/${modelSlug}`;
   const registered = await request(baseUrl + '/api/v1/agents?limit=100');
   const current = registered.data.find((agent) => agent.name === fallbackAgent.name);
   const payload = current
@@ -75,7 +90,7 @@ async function configureFallback({
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  return `Registered provider ${providerName} for model ${modelName}.`;
+  return `Registered provider ${providerName} for model ${modelSlug}.`;
 }
 
 module.exports = { configureFallback };

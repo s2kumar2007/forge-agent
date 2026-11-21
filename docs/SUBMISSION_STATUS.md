@@ -12,7 +12,7 @@ Members: B. Sunil Kumar (Team Leader), Eric Bejoy, Ashmit Sharma, Shaurya Singla
   - PR #3 (`copilot/fix-verify-job-failure`): Ripgrep cancellation test fixes across Linux, macOS, and Windows runners.
 - **Test suite**: **184 passing tests across 23 test files** via Vitest (`npm test`).
 - **Build health**: Clean typecheck (`npm run typecheck`) and production build (`npm run build`).
-- **Configured models**: Primary and inline models run on Google Gemini (`google-gemini/gemini-3-5-flash`); fallback model runs on an independent second provider, NVIDIA NIM (`forge-fallback/meta/llama-3.3-70b-instruct`). Groq is optional.
+- **Configured models**: Primary and inline models run on Google Gemini (`google-gemini/gemini-3-5-flash`); fallback model runs on an independent second provider, NVIDIA NIM (`forge-fallback/llama-3-3-70b-instruct`). Groq is optional.
 
 | Item | State | Evidence |
 |---|---|---|

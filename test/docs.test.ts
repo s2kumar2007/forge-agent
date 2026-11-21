@@ -11,7 +11,7 @@ describe('submission documentation contracts',()=>{
     for(const agent of agents)expect(readme).toContain(agent.manifest.model.name);
     expect(agents.find(a=>a.name==='forge-agent')?.manifest.model.name).toBe('google-gemini/gemini-3-5-flash');
     expect(agents.find(a=>a.name==='forge-inline')?.manifest.model.name).toBe('google-gemini/gemini-3-5-flash');
-    expect(agents.find(a=>a.name==='forge-agent-fallback')?.manifest.model.name).toBe('forge-fallback/meta/llama-3.3-70b-instruct');
+    expect(agents.find(a=>a.name==='forge-agent-fallback')?.manifest.model.name).toBe('forge-fallback/llama-3-3-70b-instruct');
   });
   it('fails if primary and fallback agents use the same provider to ensure independent fallback', async () => {
     const agents = await loadAgentFiles('agents');

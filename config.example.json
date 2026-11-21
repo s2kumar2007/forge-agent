@@ -26,8 +26,8 @@
       },
       "models": [
         {
-          "name": "<nvidia-model-name-placeholder>",
-          "model_id": "<nvidia-model-id-placeholder>"
+          "name": "llama-3-3-70b-instruct",
+          "model_id": "meta/llama-3.3-70b-instruct"
         }
       ]
     },
