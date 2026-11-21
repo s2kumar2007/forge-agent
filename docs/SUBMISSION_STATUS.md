@@ -10,13 +10,18 @@ Members: B. Sunil Kumar (Team Leader), Eric Bejoy, Ashmit Sharma, Shaurya Singla
   - PR #1 (`feature/opt-in-fallback-provider`): Opt-in secondary provider fallback configuration, 5xx server error failover, and replay guards after approvals.
   - PR #2 (`shaurya/context-visibility`): Context token budgeting visibility, session ID display, and real compaction/subagent lifecycle streaming in the chat panel.
   - PR #3 (`copilot/fix-verify-job-failure`): Ripgrep cancellation test fixes across Linux, macOS, and Windows runners.
-- **Test suite**: **192 passing tests across 24 test files** via Vitest (`npm test`).
+- **Test suite**: **238 passing tests across 26 test files** via Vitest (`npm test`).
 - **Build health**: Clean typecheck (`npm run typecheck`) and production build (`npm run build`).
 - **Configured models**: Primary and inline models run on NVIDIA NIM (`forge-nvidia/nemotron-3-5-lightning-30b-a3b`); fallback model runs on Google Gemini (`google-gemini/gemini-3-8-flash`). Groq is optional.
+- **Recent hardenings**:
+  - Item 1 (Circuit Breaker): 5-minute in-memory circuit breaker on primary outage (connection error, timeout, 401/403, 413, 5xx) with direct fallback routing, single-attempt timeout behavior, and panel notification.
+  - Item 2 (Secret Protection): Strict filtering and refusal of secret files (`.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*`, `*.p12`, `.git`) across all tools and context assembly.
+  - Item 3 (Cross-Request Cache): In-memory `WorkspaceCache` validated by `mtimeMs` and `size`, with automatic VS Code event invalidation.
+  - Item 4 (Bounded Exploration): Explicit stopping rule in instructions (at most 4 reads or 3 searches before proposing edits, never repeat equivalent searches) and 8 read-only tool-call reminder notice.
 
 | Item | State | Evidence |
 |---|---|---|
-| Typecheck / unit tests / build | Pass: 192 tests passing across 24 files | `npm test`, `npm run typecheck`, `npm run build` |
+| Typecheck / unit tests / build | Pass: 238 tests passing across 26 files | `npm test`, `npm run typecheck`, `npm run build` |
 | Multi-platform CI | Pass on Windows, macOS, Linux | GitHub Actions (`test` and `verify` workflows) |
 | Windows package & native host | Pass: packaged VSIX installs and passes native editor & undo checks | `output/forge-agent-win32-x64.vsix`; docs/vsix-final-native-results.json |
 | Task A (Inline edit) | Pass: scoped reviewed edits, hunk accept/reject, independent docstring & debug flag verification | docs/live-A-exact-edits.json; scripts/verify-flask-demo.py |

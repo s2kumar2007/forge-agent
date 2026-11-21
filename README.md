@@ -26,11 +26,13 @@ The extension integrates VS Code with the TrueForge agent framework through a cl
 
 - **TrueForge client**: Connects to the local TrueForge daemon (`@truefoundry/trueforge-sdk` 0.182.0) over HTTP/SSE. The extension starts sessions (`sessions.create`), streams turns (`createTurnStream`), and sends tool approval results in resume turns via `user.tool_approval` messages.
 - **Editor MCP tools**: Hosts a stateless loopback MCP server (`http://127.0.0.1:<port>/mcp`) registered via `PUT /api/v1/settings/mcp-servers` using a randomized bearer token. It exposes five editor tools:
-  - `read_file`: Bounded file reads with line-range limits (max 40 lines per slice, max 80 for whole files) to conserve model context.
-  - `list_dir`: Directory listing with strict workspace path containment.
-  - `search_workspace`: Text and symbol search powered by ripgrep with ranked matches.
-  - `propose_write`: Virtual diff generation for proposed file changes without modifying files on disk.
+  - `read_file`: Bounded file reads with line-range limits (max 40 lines per slice, max 80 for whole files) to conserve model context. Refuses secret-like files with `blocked: secret-like file`.
+  - `list_dir`: Directory listing with strict workspace path containment and secret-file omission.
+  - `search_workspace`: Text and symbol search powered by ripgrep with ranked matches, omitting secret files.
+  - `propose_write`: Virtual diff generation for proposed file changes without modifying files on disk, rejecting secret file paths.
   - `run_command`: Shell command execution in the workspace root with timeout and process-tree termination.
+- **Secret file protection**: Context assembly, directory listings, searches, and file reads strictly skip and refuse sensitive files matching `.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*`, `*.p12`, and anything under `.git`, while allowing legitimate configuration files (e.g. `config.py`).
+- **Cross-request workspace cache**: A dedicated `WorkspaceCache` caches the workspace file list and file text across requests, validated on every lookup by file modification time (`mtimeMs`) and byte size (`size`). Cache entries are invalidated automatically on VS Code file-change events and proposed edits, eliminating redundant disk I/O without serving stale data.
 - **Approval-driven per-hunk diff review**: `propose_write` opens an interactive side-by-side diff review panel. Users can accept or reject individual hunks independently. Only accepted hunks are applied atomically via `vscode.workspace.applyEdit`.
 - **Undo**: A custom `forge.undoLast` stack stores up to 50 edits in memory, verifies base text integrity before reverting, restores original line endings (CRLF/LF), and deletes newly created files on undo. Normal VS Code undo (`Ctrl+Z`/`Cmd+Z`) remains fully functional.
 - **Streaming and cancellation**: Model responses stream live into the chat panel. Pressing **Stop** calls `sessions.cancel`, clears review state, aborts pending approvals, and terminates running command process trees.
@@ -42,9 +44,10 @@ Before executing a turn in Agent mode, Forge Agent automatically gathers relevan
 1. **Explicit mentions**: `@file:path` and `@symbol:name` mentions in the prompt are parsed first and given top priority (capped at 40 lines for files, 25 signatures for symbols).
 2. **Ranked candidate shortlist**: Keywords extracted from the prompt are searched across the repository using ripgrep. Matches are ranked by term frequency, file path relevance, top-level symbol definitions, and module importer relationships (downstream dependencies). Dense hit windows are capped at 40 lines.
 3. **Repo map**: A compact overview of workspace directory structure is budgeted up to 20% of the token allocation.
-4. **Per-request caching**: File contents and symbol AST parses are cached in memory for the duration of a single `assembleContext` run and immediately discarded.
-5. **Token budgeting**: The default context budget is `2000` tokens (`forge.contextBudget`), estimated at ~4 characters per token. For the fallback agent, the budget is `1500` tokens (`forge.fallbackContextBudget`).
-6. **Context used block in the panel**: The chat panel displays a collapsible **Context used** block detailing:
+4. **Cross-request and per-request caching**: Workspace file lists and file contents are cached across requests by `WorkspaceCache` validated by file `mtimeMs` and `size`, while AST parses are cached for the duration of a single `assembleContext` run, avoiding redundant disk I/O while guaranteeing fresh data.
+5. **Secret file exclusion**: Context assembly strictly excludes secret-like files (`.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*`, `*.p12`, `.git`) from file lists, keyword searches, and explicit mentions.
+6. **Token budgeting**: The default context budget is `2000` tokens (`forge.contextBudget`), estimated at ~4 characters per token. For the fallback agent, the budget is `1500` tokens (`forge.fallbackContextBudget`).
+7. **Context used block in the panel**: The chat panel displays a collapsible **Context used** block detailing:
    - Budget summary: `Context: <N> items, <used> of <budget> estimated tokens`
    - Per-item path, rationale, and estimated token size
    - Session identity (`Session: <id>`) and real harness events (subagent lifecycle lines like `Subagent <title> started/finished` and compaction lines like `Context compacted`)
@@ -64,6 +67,8 @@ Before executing a turn in Agent mode, Forge Agent automatically gathers relevan
   - Primary requests execute on NVIDIA NIM (`forge-nvidia/nemotron-3-5-lightning-30b-a3b`), offering roughly 40 requests per minute on the free tier.
   - If the primary model encounters a permanent error (HTTP 401, 403, 413), it fails fast without retrying and immediately launches `forge-agent-fallback` in a fresh session on Google Gemini.
   - If the primary encounters transient errors (HTTP 429, 500, 502, 503, network drop), it retries with exponential backoff up to a 12s cap. If failures persist (capped at 30s total fallback wait), it transitions to `forge-agent-fallback` on the independent second provider (Google Gemini).
+  - **Circuit breaker (ITEM 1)**: When the primary agent fails due to a connection error, timeout, 401/403, 413, or 5xx, it is marked unhealthy for 5 minutes in memory. Subsequent requests route immediately to the fallback agent without attempting the primary, displaying a single panel notification: `'Primary unavailable, using fallback'`. Connection timeouts are treated as a single attempt before falling back. The circuit breaker resets after 5 minutes or immediately whenever configuration settings are modified.
+  - **Exploration limits (ITEM 4)**: Agent instructions explicitly mandate: after at most 4 reads or 3 searches the agent must list target files and call `propose_write` for each; never repeat an equivalent search. The controller includes a read-only tool-call counter that issues a gentle reminder notice after 8 read-only calls (`read_file`, `search_workspace`, `list_dir`) without hard-stopping the run.
   - Google Gemini free tier allows approximately 5 requests per minute, making it suitable for fallback use.
   - **Replay guard**: To prevent duplicate side effects, automatic retry and fallback are disabled once a `propose_write` or `run_command` has been approved.
 
@@ -71,10 +76,13 @@ Before executing a turn in Agent mode, Forge Agent automatically gathers relevan
 
 The extension incorporates latency and token optimizations without weakening safety:
 
+- **Cross-request workspace cache**: Avoids redundant file-system traversals and text document reads across requests using an `mtime`- and `size`-validated cache invalidated on editor file events and diff proposals.
 - **Combined ripgrep scans**: Ripgrep keyword and importer scans run as single alternated executions rather than spawning separate processes per keyword, preserving ranking inputs and cancellation responsiveness.
 - **Per-request read cache**: File contents and symbol definitions are cached during context assembly and cleared at turn completion, avoiding redundant disk I/O.
 - **Lower default context budget**: Default `forge.contextBudget` is set to `2000` tokens (down from 6000), reducing prompt payload size while maintaining retrieval quality.
 - **Fast retry and fail-fast resilience**: Permanent HTTP errors fail fast without retry loops. Quota (429) retry waits are capped at 12s (down from 60s), total fallback wait capped at 30s, adapter retries are capped at 2, and double-retry stacking across primary and fallback models is eliminated.
+- **Circuit breaker fast path**: Skips primary retry overhead when the primary is already known unhealthy within a 5-minute window.
+- **Early exploration bounds**: Instruction rules bound reads to 4 and searches to 3, complemented by an 8-call read-only reminder to keep agent execution focused on concrete proposals.
 - **Tuned model parameters**: Primary agent parameters use serialized tool calls (`parallel_tool_calls: false`), `max_tokens: 8000`, and compaction trigger `40000`, while the fallback agent uses `max_tokens: 8000` and compaction trigger `30000`, reducing recovery and response latency.
 - **Uncompromised safety rules**: MCP tool names (`read_file`, `list_dir`, `search_workspace`, `propose_write`, `run_command`), approval flows, serialized tool calls, and per-hunk diff review remain strictly enforced.
 
