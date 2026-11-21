@@ -26,7 +26,7 @@ The extension integrates VS Code with the TrueForge agent framework through a cl
 
 - **TrueForge client**: Connects to the local TrueForge daemon (`@truefoundry/trueforge-sdk` 0.182.0) over HTTP/SSE. The extension starts sessions (`sessions.create`), streams turns (`createTurnStream`), and sends tool approval results in resume turns via `user.tool_approval` messages.
 - **Editor MCP tools**: Hosts a stateless loopback MCP server (`http://127.0.0.1:<port>/mcp`) registered via `PUT /api/v1/settings/mcp-servers` using a randomized bearer token. It exposes five editor tools:
-  - `read_file`: Bounded file reads with line-range limits (max 40 lines per slice, max 80 for whole files) to conserve model context. Refuses secret-like files with `blocked: secret-like file`.
+  - `read_file`: Bounded file reads with line-range limits (max 80 lines per slice, or outline=true for definitions) to conserve model context. Refuses secret-like files with `blocked: secret-like file`.
   - `list_dir`: Directory listing with strict workspace path containment and secret-file omission.
   - `search_workspace`: Text and symbol search powered by ripgrep with ranked matches, omitting secret files.
   - `propose_write`: Virtual diff generation for proposed file changes without modifying files on disk, rejecting secret file paths.

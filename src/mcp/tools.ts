@@ -69,7 +69,7 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
   }
 
   mcp.registerTool('read_file', {
-    description: 'Read a workspace file, optionally only lines start..end (1-based, inclusive; maximum 40 lines recommended, up to 80 lines absolute limit). Prefer reading short slices.',
+    description: 'Read a workspace file, optionally only lines start..end (1-based, inclusive; at most 80 lines, or set outline=true for definitions). Prefer reading short slices.',
     inputSchema: { path: z.string(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional(), outline: z.boolean().optional() },
     annotations: { readOnlyHint: true },
   }, ({ path, start, end, outline }) => guarded(async () => {
@@ -94,7 +94,7 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     const s = start ?? 1;
     const requestedEnd = end ?? lines.length;
     if (requestedEnd < s) return fail('end must be greater than or equal to start.');
-    if (requestedEnd - s + 1 > MAX_READ_LINES) return fail(`Read range is limited to ${MAX_READ_LINES} lines; requested ${requestedEnd - s + 1} lines. Request a smaller slice of at most 40 lines (e.g. start=560, end=599) or proceed directly to propose_write.`);
+    if (requestedEnd - s + 1 > MAX_READ_LINES) return fail(`Read range is limited to ${MAX_READ_LINES} lines; requested ${requestedEnd - s + 1} lines. Request a smaller slice of at most 80 lines (e.g. start=560, end=639), use outline=true for definitions, or proceed directly to propose_write.`);
     const e = Math.min(requestedEnd, lines.length);
 
     return ok(`${rel} lines ${s}-${e} of ${lines.length}`, lines.slice(s - 1, e).join('\n'));

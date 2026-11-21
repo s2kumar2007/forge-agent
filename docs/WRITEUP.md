@@ -20,7 +20,7 @@ Forge Agent coordinates between VS Code and TrueForge using an asynchronous clie
 
 - **Sessions and turns**: The extension manages agent sessions using `@truefoundry/trueforge-sdk` over local HTTP/SSE. Conversations are initiated with `sessions.create` and processed via `createTurnStream`. As events arrive, `turnRunner` processes streamed chunks and maintains an index of active tool calls. When a tool call requires user confirmation, the turn pauses; upon user approval, a resume turn is dispatched containing a `user.tool_approval` payload.
 - **Editor MCP server**: The extension runs a stateless loopback MCP endpoint (`http://127.0.0.1:<port>/mcp`) registered dynamically via `PUT /api/v1/settings/mcp-servers` with a random bearer token. Five core tools are exposed:
-  1. `read_file`: Bounded file inspection with mandatory line ranges for files exceeding 80 lines (max 40 lines per slice) to prevent token exhaustion. Secret-like files are refused with `blocked: secret-like file`.
+  1. `read_file`: Bounded file inspection with mandatory line ranges for files exceeding 80 lines (max 80 lines per slice, or outline=true for definitions) to prevent token exhaustion. Secret-like files are refused with `blocked: secret-like file`.
   2. `list_dir`: Directory listing with path-containment checks and secret-file omission.
   3. `search_workspace`: Text and symbol search powered by ripgrep with ranking heuristics, omitting secret files.
   4. `propose_write`: Virtual diff creation supporting whole files or exact-anchor replacements, guarded against secret paths.
