@@ -5,6 +5,7 @@ import type { AgentUi } from '../agent/types';
 import { assembleContext } from '../context/assemble';
 import type { WorkspaceContextDeps } from '../context/vscodeDeps';
 import { getConfig } from '../config';
+import type { RunMetrics } from '../metrics';
 
 type ToWebview =
   | { type: 'userMessage'; text: string }
@@ -15,7 +16,8 @@ type ToWebview =
   | { type: 'done'; status: string; message?: string }
   | { type: 'busy'; value: boolean }
   | { type: 'context'; items: { label: string; reason: string; tokens: number }[]; tokens: number; budget: number }
-  | { type: 'suggestions'; items: { insert: string; label: string }[] };
+  | { type: 'suggestions'; items: { insert: string; label: string }[] }
+  | { type: 'metrics'; metrics: RunMetrics };
 
 /** Webview chat. A thin UI over AgentController; all network work is async so the host never blocks. */
 export class ChatPanel {
@@ -59,6 +61,7 @@ export class ChatPanel {
       finished: (info) => this.post({ type: 'done', status: info.status, message: info.message }),
       eventLine: (t) => this.post({ type: 'notice', text: t }),
       session: (id) => this.post({ type: 'session', id }),
+      metrics: (metrics) => this.post({ type: 'metrics', metrics }),
     };
     try {
       const buildMessage = async (budget: number): Promise<string> => {
@@ -109,6 +112,7 @@ export class ChatPanel {
 <div id="ac"></div>
 <div id="bar"><textarea id="input" rows="3" placeholder="Ask Forge... (Ctrl+Enter to send)"></textarea>
 <button id="send">Send</button><button id="stop" disabled>Stop</button></div>
+<footer id="footer"><div id="metrics-footer"></div></footer>
 <script nonce="${nonce}" src="${js}"></script></body></html>`;
   }
 }

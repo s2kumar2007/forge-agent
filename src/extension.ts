@@ -52,6 +52,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     onRunStart: () => { api?.beginRun(); resetToolRunState(); },
     onCancel: () => { store.clear(); api?.cancelCommands(); },
     logError: (err) => { outputChannel.appendLine(err instanceof Error ? (err.stack ?? err.message) : String(err)); },
+    logMetrics: (summary) => { outputChannel.appendLine(summary); },
   });
 
   ctx.subscriptions.push(

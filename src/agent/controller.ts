@@ -2,6 +2,7 @@ import type { TrueForge, TrueForgeApi } from '@truefoundry/trueforge-sdk';
 import { describeToolCall, runTurn, toolName } from '../forge/turnRunner';
 import type { AgentUi, ApprovalHandler } from './types';
 import { CancelledError, ForgeFailure, IterationLimitError, isIterationLimitError, runWithFallback } from './resilience';
+import { RunMetricsCollector, type RunMetrics } from '../metrics';
 
 function isAuthenticationFailure(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -44,6 +45,8 @@ export interface ControllerDeps {
   logError?: (err: unknown) => void;
   now?: () => number;
   circuitBreakerDurationMs?: number;
+  onMetrics?: (metrics: RunMetrics) => void;
+  logMetrics?: (summary: string) => void;
 }
 
 export function sanitizeReason(err: unknown): string {
@@ -134,6 +137,8 @@ export class AgentController {
     }
 
     let primaryFailed = false;
+    const metricsCollector = new RunMetricsCollector(this.now);
+    metricsCollector.recordInput(request);
 
     try {
       const outcome = await runWithFallback<'done' | 'cancelled'>({
@@ -145,7 +150,7 @@ export class AgentController {
         isCancelled: () => this.cancelled,
         canRetry: () => this.approvedOperations === 0,
         shouldFallbackImmediately: (err) => isAuthenticationFailure(err) || isNetworkFailure(err) || isServerFailure(err) || isPayloadTooLarge(err),
-        attempt: (agent) => this.attempt(agent, request, ui, rebuildRequest, () => ++clientToolResponses),
+        attempt: (agent) => this.attempt(agent, request, ui, rebuildRequest, () => ++clientToolResponses, metricsCollector),
         onRetry: (agent, n, err) => {
           this.d.logError?.(err);
           const reason = sanitizeReason(err);
@@ -191,6 +196,13 @@ export class AgentController {
       this.d.approvals.cancelAll();
       this.running = false;
       this.sessionId = undefined;
+      const metrics = metricsCollector.finish();
+      if (!metrics.agentAnswered) {
+        metrics.agentAnswered = primaryFailed ? (chosenFallback ?? chosenPrimary) : chosenPrimary;
+      }
+      ui.metrics?.(metrics);
+      this.d.onMetrics?.(metrics);
+      this.d.logMetrics?.(metricsCollector.formatSummary(metrics));
     }
   }
 
@@ -215,6 +227,7 @@ export class AgentController {
     ui: AgentUi,
     rebuildRequest?: (agent: string) => Promise<string>,
     countClientToolResponse?: () => number,
+    metricsCollector?: RunMetricsCollector,
   ): Promise<'done' | 'cancelled'> {
     this.d.approvals.cancelAll();
     this.sessionId = undefined;
@@ -239,12 +252,17 @@ export class AgentController {
     let readOnlyReminderEmitted = false;
 
     for (let round = 0; round < 200; round++) {
+      metricsCollector?.recordModelTurn();
       let turnReadOnlyCalls = 0;
       const res = await runTurn(client, sid, input, {
-        onTextDelta: (id, t) => ui.textDelta(id, t),
+        onTextDelta: (id, t) => {
+          metricsCollector?.recordTextDelta(t);
+          ui.textDelta(id, t);
+        },
         onEventLine: (line) => ui.eventLine?.(line),
         onToolCall: (n) => {
           hadToolCalls = true;
+          metricsCollector?.recordToolStart(n);
           if (n === 'propose_write') hadProposeWrite = true;
           if (!isMutatingTool(n)) {
             turnReadOnlyCalls++;
@@ -257,6 +275,7 @@ export class AgentController {
           ui.toolCall(n);
         },
       }, this.abort.signal);
+      metricsCollector?.recordToolEnd();
       if (this.cancelled || res.status === 'cancelled') return 'cancelled';
       if (res.status === 'error') {
         const errMsg = res.error ?? 'the turn ended with an error';
@@ -314,6 +333,7 @@ export class AgentController {
         continue;
       }
       if (res.status === 'done') {
+        metricsCollector?.setAgentAnswered(agent);
         const isFallback = agent === this.d.agents().fallback;
         if (isFallback && hadToolCalls && !hadProposeWrite) {
           ui.notice('Fallback model stopped early');

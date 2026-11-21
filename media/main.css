@@ -289,6 +289,26 @@ button:disabled {
   cursor: not-allowed;
 }
 
+#footer {
+  padding: 4px 12px;
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  border-top: 1px solid var(--vscode-panel-border);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 20px;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+#metrics-footer {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (prefers-reduced-motion: reduce) {
   #log {
     scroll-behavior: auto;

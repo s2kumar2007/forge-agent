@@ -4,6 +4,7 @@ const log = document.getElementById('log');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
 const stopBtn = document.getElementById('stop');
+const metricsFooter = document.getElementById('metrics-footer');
 const bubbles = new Map(); // message id -> element, so deltas append to the right bubble
 
 function add(cls, text) {
@@ -49,6 +50,16 @@ window.addEventListener('message', ({ data: m }) => {
       log.appendChild(d); log.scrollTop = log.scrollHeight; break;
     }
     case 'suggestions': showSuggestions(m.items); break;
+    case 'metrics': {
+      if (metricsFooter && m.metrics) {
+        const met = m.metrics;
+        const ttft = met.timeToFirstTokenMs !== undefined ? `${met.timeToFirstTokenMs}ms` : 'n/a';
+        const total = `${(met.totalTimeMs / 1000).toFixed(2)}s`;
+        const agent = met.agentAnswered || 'primary';
+        metricsFooter.textContent = `${agent} · ${total} · TTFT ${ttft} · ${met.modelTurns} turns · ~${met.estimatedTokensIn} in / ~${met.estimatedTokensOut} out`;
+      }
+      break;
+    }
     case 'busy': sendBtn.disabled = m.value; stopBtn.disabled = !m.value; break;
   }
 });

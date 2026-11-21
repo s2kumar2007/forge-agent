@@ -1,3 +1,5 @@
+import type { RunMetrics } from '../metrics';
+
 export type ApprovalDecision = { status: 'allow' } | { status: 'deny'; reason: string };
 
 export interface ToolCallInfo { name: string; args: Record<string, unknown> }
@@ -23,4 +25,5 @@ export interface AgentUi {
   finished(info: FinishInfo): void;
   eventLine?(text: string): void;
   session?(id: string): void;
+  metrics?(metrics: RunMetrics): void;
 }
