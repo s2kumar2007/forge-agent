@@ -9,8 +9,8 @@ describe('submission documentation contracts',()=>{
   it('keeps model references synchronized with documented configured names',async()=>{
     const agents=await loadAgentFiles('agents');const readme=await fs.readFile('README.md','utf8');
     for(const agent of agents)expect(readme).toContain(agent.manifest.model.name);
-    expect(agents.find(a=>a.name==='forge-agent')?.manifest.model.name).toBe('google-gemini/gemini-2-5-flash');
-    expect(agents.find(a=>a.name==='forge-inline')?.manifest.model.name).toBe('google-gemini/gemini-2-5-flash');
+    expect(agents.find(a=>a.name==='forge-agent')?.manifest.model.name).toBe('google-gemini/gemini-3-8-flash');
+    expect(agents.find(a=>a.name==='forge-inline')?.manifest.model.name).toBe('google-gemini/gemini-3-8-flash');
     expect(agents.find(a=>a.name==='forge-agent-fallback')?.manifest.model.name).toBe('forge-fallback/mistral-large-4-1t-a52b');
   });
   it('fails if primary and fallback agents use the same provider to ensure independent fallback', async () => {

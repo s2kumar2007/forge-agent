@@ -52,10 +52,10 @@ Before executing a turn in Agent mode, Forge Agent automatically gathers relevan
 ## Model setup
 
 - **Models used**:
-  - Primary agent (`forge-agent`): Google Gemini `google-gemini/gemini-2-5-flash`, temperature 0.2, serialized tool calls (`parallel_tool_calls: false`), `reasoning_effort: "low"`, `max_tokens: 10000`.
-  - Inline agent (`forge-inline`): Google Gemini `google-gemini/gemini-2-5-flash`, temperature 0.2.
+  - Primary agent (`forge-agent`): Google Gemini `google-gemini/gemini-3-8-flash`, temperature 0.2, serialized tool calls (`parallel_tool_calls: false`), `reasoning_effort: "low"`, `max_tokens: 10000`.
+  - Inline agent (`forge-inline`): Google Gemini `google-gemini/gemini-3-8-flash`, temperature 0.2.
   - Fallback agent (`forge-agent-fallback`): NVIDIA NIM `mistralai/mistral-large-4-1t-a52b` (configured name: `forge-fallback/mistral-large-4-1t-a52b`), temperature 0.2, `max_tokens: 8000`.
-- **Where they run**: Primary and inline models run on Google cloud APIs (`google-gemini/gemini-2-5-flash`). The fallback model runs on NVIDIA NIM cloud APIs (`forge-fallback/mistral-large-4-1t-a52b`). TrueForge runs locally on `127.0.0.1`. (The Groq adapter `scripts/groq-adapter.cjs` is optional and not used on the default path).
+- **Where they run**: Primary and inline models run on Google cloud APIs (`google-gemini/gemini-3-8-flash`). The fallback model runs on NVIDIA NIM cloud APIs (`forge-fallback/mistral-large-4-1t-a52b`). TrueForge runs locally on `127.0.0.1`. (The Groq adapter `scripts/groq-adapter.cjs` is optional and not used on the default path).
 - **Cost**: Google Gemini and NVIDIA NIM free tiers, approximately INR 0.
 - **How to switch models**:
   - To change provider models, edit the model fields in `agents/*.json` or update providers in the TrueForge UI (`http://localhost:8790`).
@@ -121,7 +121,7 @@ TrueForge will start on `http://localhost:8790`.
 #### A. Primary provider: Google Gemini
 1. Open the TrueForge UI in your browser at `http://localhost:8790`.
 2. Navigate to **Settings** -> **Model Providers**.
-3. Add a **Google** provider named `google-gemini`, enter your Gemini API key, and ensure `gemini-2-5-flash` is enabled.
+3. Add a **Google** provider named `google-gemini`, enter your Gemini API key, and ensure `gemini-3-8-flash` is enabled.
 
 #### B. Fallback provider: NVIDIA NIM (Second Provider)
 Configure NVIDIA NIM as the independent fallback provider using the helper script:
