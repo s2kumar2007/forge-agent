@@ -2,6 +2,7 @@ import { estimateTokens, packContext, renderContextItem, type ContextItem, type 
 import { extractKeywords, parseMentions } from './keywords';
 import { topLevelSymbols } from './symbols';
 import type { SearchHit, SymbolHit } from '../workspace/types';
+import { isSecretPath } from '../workspace/paths';
 
 /** Everything assemble() needs from the workspace; implemented with ripgrep/VS Code, faked in tests. */
 export interface ContextDeps {
@@ -68,12 +69,13 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
   };
   const keywords = extractKeywords(request);
   const mentions = parseMentions(request);
-  const files = (await deps.listFiles()).filter((f) => SOURCE_RE.test(f));
+  const files = (await deps.listFiles()).filter((f) => !isSecretPath(f) && SOURCE_RE.test(f));
   if (signal?.aborted) throw new Error('Operation aborted');
   const items: ContextItem[] = [];
 
   // --- 1. explicit mentions ---
   for (const f of mentions.files) {
+    if (isSecretPath(f)) continue;
     if (signal?.aborted) throw new Error('Operation aborted');
     const text = await cachedReadText(f);
     if (text === undefined) continue;
@@ -85,8 +87,9 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
   for (const name of mentions.symbols) {
     if (signal?.aborted) throw new Error('Operation aborted');
     const hit = await deps.findSymbol(name);
-    const text = hit ? await cachedReadText(hit.path) : undefined;
-    if (!hit || text === undefined) continue;
+    if (!hit || isSecretPath(hit.path)) continue;
+    const text = await cachedReadText(hit.path);
+    if (text === undefined) continue;
     const lines = text.split('\n');
     const a = Math.max(1, hit.line - 2), b = Math.min(lines.length, hit.line + 40);
     items.push({ label: `${hit.path}:${a}-${b}`, reason: `mentioned with @symbol ${name}`, text: slice(lines, a, b), priority: 99 });
@@ -110,7 +113,10 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
 
   for (const [k, hits] of perKeyword) {
     const byFile = new Map<string, SearchHit[]>();
-    for (const h of hits) byFile.set(h.path, [...(byFile.get(h.path) ?? []), h]);
+    for (const h of hits) {
+      if (isSecretPath(h.path)) continue;
+      byFile.set(h.path, [...(byFile.get(h.path) ?? []), h]);
+    }
     for (const [f, hs] of byFile) {
       bump(f, Math.min(hs.length, 5), `${hs.length} hit(s) for "${k}"`);
       hitLines.set(f, [...(hitLines.get(f) ?? []), ...hs.map((h) => h.line)]);
@@ -146,11 +152,11 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
     if (deps.searchAllImporters) {
       const impMap = await deps.searchAllImporters(candidateMods.map((c) => c.mod), signal);
       for (const { file: f, mod } of candidateMods) {
-        for (const h of impMap.get(mod) ?? []) if (h.path !== f) bump(h.path, 1.5, `imports ${mod}`, true);
+        for (const h of impMap.get(mod) ?? []) if (h.path !== f && !isSecretPath(h.path)) bump(h.path, 1.5, `imports ${mod}`, true);
       }
     } else {
       for (const { file: f, mod } of candidateMods) {
-        for (const h of await deps.searchImporters(mod)) if (h.path !== f) bump(h.path, 1.5, `imports ${mod}`, true);
+        for (const h of await deps.searchImporters(mod)) if (h.path !== f && !isSecretPath(h.path)) bump(h.path, 1.5, `imports ${mod}`, true);
       }
     }
   }

@@ -50,3 +50,24 @@ export async function resolveInsideReal(root: string, p: string): Promise<string
 export function toRel(root: string, abs: string): string {
   return path.relative(root, abs).split(path.sep).join('/');
 }
+
+/**
+ * Checks if a path or filename matches secret-like patterns or is inside .git:
+ * .env, .env.*, *.pem, *.key, id_rsa*, credentials*, *.p12, or anything under .git.
+ */
+export function isSecretPath(p: string): boolean {
+  if (typeof p !== 'string' || p.length === 0) return false;
+  const normalized = p.replace(/\\/g, '/');
+  const segments = normalized.split('/').filter(Boolean);
+  if (segments.some((s) => s.toLowerCase() === '.git')) {
+    return true;
+  }
+  const base = segments[segments.length - 1] ?? '';
+  if (/^\.env(?:\..*)?$/i.test(base)) return true;
+  if (/\.pem$/i.test(base)) return true;
+  if (/\.key$/i.test(base)) return true;
+  if (/^id_rsa/i.test(base)) return true;
+  if (/^credentials/i.test(base)) return true;
+  if (/\.p12$/i.test(base)) return true;
+  return false;
+}

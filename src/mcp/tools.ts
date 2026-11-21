@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { EditorApi } from '../workspace/types';
-import { PathError, resolveInsideReal, toRel } from '../workspace/paths';
+import { PathError, isSecretPath, resolveInsideReal, toRel } from '../workspace/paths';
 import { rankSymbols, rankTextHits } from '../context/rank';
 import { materializeWrite } from '../review/proposal';
 
@@ -35,7 +35,10 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi): void {
     inputSchema: { path: z.string(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() },
     annotations: { readOnlyHint: true },
   }, ({ path, start, end }) => guarded(async () => {
+    if (isSecretPath(path)) return fail('blocked: secret-like file');
     const abs = await resolveInsideReal(root, path);
+    const rel = toRel(root, abs);
+    if (isSecretPath(rel)) return fail('blocked: secret-like file');
     const text = await api.readText(abs);
     if (text === undefined) return fail(`File not found: ${path}`);
     if (Buffer.byteLength(text) > MAX_READ_BYTES && start === undefined) return fail('File is larger than 1MB; request a line range with start/end.');
@@ -47,7 +50,6 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi): void {
     if (requestedEnd - s + 1 > MAX_READ_LINES) return fail(`Read range is limited to ${MAX_READ_LINES} lines; requested ${requestedEnd - s + 1} lines. Request a smaller slice of at most 40 lines (e.g. start=560, end=599) or proceed directly to propose_write.`);
     const e = Math.min(requestedEnd, lines.length);
 
-    const rel = toRel(root, abs);
     const sliceKey = `${rel}:${s}-${e}`;
     if (seenReads.has(sliceKey)) {
       return ok(`(Already read ${rel} lines ${s}-${e} in this session. Do not re-read identical slices. Formulate edits and call propose_write immediately.)`);
@@ -70,8 +72,12 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi): void {
     inputSchema: { path: z.string().default('.') },
     annotations: { readOnlyHint: true },
   }, ({ path }) => guarded(async () => {
+    if (isSecretPath(path)) return ok('(empty)');
     const abs = await resolveInsideReal(root, path);
-    const entries = (await api.listDir(abs)).sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1));
+    if (isSecretPath(toRel(root, abs))) return ok('(empty)');
+    const entries = (await api.listDir(abs))
+      .filter((e) => !isSecretPath(e.name))
+      .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1));
     return ok(entries.slice(0, 500).map((e) => e.name + (e.type === 'dir' ? '/' : '')).join('\n') || '(empty)');
   }));
 
@@ -86,10 +92,12 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi): void {
     }
     seenSearches.add(searchKey);
     if (kind === 'symbol') {
-      const ranked = rankSymbols(await api.searchSymbols(query, 100), query, max_results);
+      const rawHits = (await api.searchSymbols(query, 100)).filter((s) => !isSecretPath(s.path));
+      const ranked = rankSymbols(rawHits, query, max_results);
       return ok(ranked.map((s) => `${s.path}:${s.line}  ${s.kind} ${s.name}  -- why: ${s.why}`).join('\n') || 'No symbols found.');
     }
-    const ranked = rankTextHits(await api.searchText(query, 500), query, max_results);
+    const rawHits = (await api.searchText(query, 500)).filter((h) => !isSecretPath(h.path));
+    const ranked = rankTextHits(rawHits, query, max_results);
     return ok(ranked.map((h) => `${h.path}:${h.line}  ${h.text.trim()}  -- why: ${h.why}`).join('\n') || 'No matches.');
   }));
 
@@ -97,7 +105,9 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi): void {
     description: 'Propose a reviewed file change. For existing files prefer edits: [{old_text,new_text}]; each old_text must match exactly once. For new files use complete new_content. Provide exactly one form, plus path and rationale. Nothing is written before hunk review. Call once per file.',
     inputSchema: { path: z.string(), new_content: z.string().optional(), edits: z.array(z.object({old_text:z.string().min(1),new_text:z.string()})).min(1).max(20).optional(), rationale: z.string() },
   }, (args) => guarded(async () => {
+    if (isSecretPath(args.path)) return fail('blocked: secret-like file');
     const abs = await resolveInsideReal(root, args.path);
+    if (isSecretPath(toRel(root, abs))) return fail('blocked: secret-like file');
     const candidate = materializeWrite(await api.readText(abs), args);
     return ok(await api.applyProposal(abs, candidate));
   }));

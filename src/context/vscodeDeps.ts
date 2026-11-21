@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { ContextDeps } from './assemble';
 import type { VsCodeEditorApi } from '../workspace/vscodeApi';
 import { rgAllImporters, rgFiles, rgKeywords, rgRegex, rgText } from './ripgrep';
-import { resolveInsideReal } from '../workspace/paths';
+import { isSecretPath, resolveInsideReal } from '../workspace/paths';
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -16,17 +16,38 @@ export class WorkspaceContextDeps implements ContextDeps {
     w.onDidCreate(reset); w.onDidDelete(reset);
   }
 
-  async listFiles(): Promise<string[]> { return (this.files ??= await rgFiles(this.rgPath, this.root)); }
-  searchKeyword(k: string) { return rgText(this.rgPath, this.root, k, 5); }
-  searchKeywords(keywords: string[], signal?: AbortSignal) { return rgKeywords(this.rgPath, this.root, keywords, 5, signal); }
-  searchImporters(mod: string) {
-    const m = escapeRe(mod);
-    return rgRegex(this.rgPath, this.root, `^\\s*(from\\s+[\\w.]*\\b${m}\\b|import\\s+.*\\b${m}\\b)|(require|from)\\s*\\(?['"][^'"]*\\b${m}\\b`, 1);
+  async listFiles(): Promise<string[]> {
+    return (this.files ??= (await rgFiles(this.rgPath, this.root)).filter((f) => !isSecretPath(f)));
   }
-  searchAllImporters(modules: string[], signal?: AbortSignal) { return rgAllImporters(this.rgPath, this.root, modules, 1, signal); }
-  async readText(rel: string) { try { return await this.api.readText(await resolveInsideReal(this.root, rel)); } catch { return undefined; } }
+  async searchKeyword(k: string) {
+    return (await rgText(this.rgPath, this.root, k, 5)).filter((h) => !isSecretPath(h.path));
+  }
+  async searchKeywords(keywords: string[], signal?: AbortSignal) {
+    const raw = await rgKeywords(this.rgPath, this.root, keywords, 5, signal);
+    const filtered = new Map<string, typeof raw extends Map<any, infer V> ? V : never>();
+    for (const [k, hits] of raw.entries()) {
+      filtered.set(k, hits.filter((h) => !isSecretPath(h.path)));
+    }
+    return filtered;
+  }
+  async searchImporters(mod: string) {
+    const m = escapeRe(mod);
+    return (await rgRegex(this.rgPath, this.root, `^\\s*(from\\s+[\\w.]*\\b${m}\\b|import\\s+.*\\b${m}\\b)|(require|from)\\s*\\(?['"][^'"]*\\b${m}\\b`, 1)).filter((h) => !isSecretPath(h.path));
+  }
+  async searchAllImporters(modules: string[], signal?: AbortSignal) {
+    const raw = await rgAllImporters(this.rgPath, this.root, modules, 1, signal);
+    const filtered = new Map<string, typeof raw extends Map<any, infer V> ? V : never>();
+    for (const [mod, hits] of raw.entries()) {
+      filtered.set(mod, hits.filter((h) => !isSecretPath(h.path)));
+    }
+    return filtered;
+  }
+  async readText(rel: string) {
+    if (isSecretPath(rel)) return undefined;
+    try { return await this.api.readText(await resolveInsideReal(this.root, rel)); } catch { return undefined; }
+  }
   async findSymbol(name: string) {
-    const hits = await this.api.searchSymbols(name, 10);
+    const hits = (await this.api.searchSymbols(name, 10)).filter((h) => !isSecretPath(h.path));
     return hits.find((h) => h.name === name) ?? hits[0];
   }
 
@@ -34,9 +55,9 @@ export class WorkspaceContextDeps implements ContextDeps {
   async suggest(prefix: string): Promise<{ insert: string; label: string }[]> {
     if (prefix.startsWith('symbol:')) {
       const q = prefix.slice(7);
-      return (await this.api.searchSymbols(q || 'a', 8)).map((s) => ({ insert: `@symbol:${s.name}`, label: `${s.name}  ${s.path}:${s.line}` }));
+      return (await this.api.searchSymbols(q || 'a', 8)).filter((s) => !isSecretPath(s.path)).map((s) => ({ insert: `@symbol:${s.name}`, label: `${s.name}  ${s.path}:${s.line}` }));
     }
     const q = prefix.replace(/^file:/, '').toLowerCase();
-    return (await this.listFiles()).filter((f) => f.toLowerCase().includes(q)).slice(0, 8).map((f) => ({ insert: `@file:${f}`, label: f }));
+    return (await this.listFiles()).filter((f) => !isSecretPath(f) && f.toLowerCase().includes(q)).slice(0, 8).map((f) => ({ insert: `@file:${f}`, label: f }));
   }
 }

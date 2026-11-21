@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import type { DirEntry, EditorApi, RunResult, SearchHit, SymbolHit } from './types';
 import { rgSymbols, rgText } from './ripgrep';
 import { runShell } from './runCommand';
-import { resolveInside, resolveInsideReal, toRel } from './paths';
+import { resolveInside, resolveInsideReal, toRel, isSecretPath } from './paths';
 import { DecisionStore, proposalKey } from '../review/decisions';
 import { applyHunks } from '../review/hunks';
 import { UndoStack, hashContent } from '../review/undo';
@@ -40,6 +40,7 @@ export class VsCodeEditorApi implements EditorApi {
   root(): string { return this.rootDir; }
 
   async readText(abs: string): Promise<string | undefined> {
+    if (isSecretPath(toRel(this.rootDir, abs))) return undefined;
     try {
       // openTextDocument returns unsaved edits too, so the agent sees what the user sees.
       return (await vscode.workspace.openTextDocument(vscode.Uri.file(abs))).getText();
@@ -47,8 +48,11 @@ export class VsCodeEditorApi implements EditorApi {
   }
 
   async listDir(abs: string): Promise<DirEntry[]> {
+    if (isSecretPath(toRel(this.rootDir, abs))) return [];
     const items = await fs.readdir(abs, { withFileTypes: true });
-    return items.map((d) => ({ name: d.name, type: d.isDirectory() ? 'dir' as const : 'file' as const }));
+    return items
+      .filter((d) => !isSecretPath(d.name))
+      .map((d) => ({ name: d.name, type: d.isDirectory() ? 'dir' as const : 'file' as const }));
   }
 
   searchText(query: string, _max: number): Promise<SearchHit[]> { return rgText(this.rgPath, this.rootDir, query); }
