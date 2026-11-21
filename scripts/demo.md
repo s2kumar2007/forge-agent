@@ -16,9 +16,11 @@ This script guides the official demonstration video and local reproduction again
    ```bash
    OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1"]' npx @truefoundry/trueforge@0.182.0
    ```
-3. Configure Groq locally without committing credentials:
-   - PowerShell: `powershell -NoProfile -File .\scripts\configure-groq.ps1`
-   - macOS/Linux: `GROQ_API_KEY="<your-key>" node scripts/configure-groq.cjs`
+3. Configure model providers locally without committing credentials:
+   - In TrueForge (`http://localhost:8790`), configure the primary provider `google-gemini` with your Gemini API key.
+   - Configure the fallback provider `forge-fallback` (NVIDIA NIM with `meta/llama-3.3-70b-instruct`):
+     - Windows PowerShell: `$env:FALLBACK_API_KEY="<your-key>"; node scripts/configure-fallback.cjs`
+     - macOS/Linux: `FALLBACK_API_KEY="<your-key>" node scripts/configure-fallback.cjs`
 4. Clone Flask repository and checkout tag 3.1.3:
    ```bash
    git clone https://github.com/pallets/flask.git
@@ -94,7 +96,7 @@ This script guides the official demonstration video and local reproduction again
 
 ## Task C — Resilience and failure handling
 
-1. In TrueForge settings or by temporarily stopping the Groq adapter (`Ctrl+C` in its terminal), make the primary provider unreachable while keeping the fallback provider valid.
+1. In TrueForge settings, make the primary provider unreachable (e.g. by setting an invalid API key in google-gemini provider settings) while keeping the fallback provider valid.
 2. Repeat the exact Task A inline-edit request above on the selected get_debug_flag function.
 3. Observe initial retry notice with bounded backoff, followed by the takeover notice: `Primary model failed, using fallback`.
 4. Observe the request completing through a fresh session on the fallback model.
@@ -115,4 +117,4 @@ npm test
 npm run build
 ```
 
-All 159 tests pass across 21 test files.
+All 184 tests pass across 23 test files.

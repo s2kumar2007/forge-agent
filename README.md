@@ -73,7 +73,7 @@ The extension incorporates latency and token optimizations without weakening saf
 - **Per-request read cache**: File contents and symbol definitions are cached during context assembly and cleared at turn completion, avoiding redundant disk I/O.
 - **Lower default context budget**: Default `forge.contextBudget` is set to `2000` tokens (down from 6000), reducing prompt payload size while maintaining retrieval quality.
 - **Fast retry and fail-fast resilience**: Permanent HTTP errors fail fast without retry loops. Quota (429) retry waits are capped at 12s (down from 60s), adapter retries are capped at 2, and double-retry stacking across primary and fallback models is eliminated.
-- **Tuned fallback agent**: Fallback agent parameters are set to `reasoning_effort: "low"` and `max_tokens: 10000`, reducing recovery latency.
+- **Tuned model parameters**: Primary agent parameters are set to `reasoning_effort: "low"` and `max_tokens: 10000`, while the fallback agent uses `max_tokens: 8000` and compaction trigger `30000`, reducing recovery and response latency.
 - **Uncompromised safety rules**: MCP tool names (`read_file`, `list_dir`, `search_workspace`, `propose_write`, `run_command`), approval flows, serialized tool calls, and per-hunk diff review remain strictly enforced.
 
 ## Setup from a clean clone
@@ -245,9 +245,9 @@ Open the Flask repository in the Extension Development Host.
 ## Known limitations
 
 - **Command permissions**: Shell commands run with the host user's permissions. Path preflight checks reject obvious parent traversal and external paths, but `run_command` is not an OS sandbox. Approved command effects cannot be rolled back automatically.
-- **In-memory undo**: The custom undo stack (`forge.undoLast`) retains up to 50 edits in memory and does not survive extension host reloads or VS Code restarts.
+- **Undo persistence**: The custom undo stack (`forge.undoLast`) persists up to 50 operations in workspaceState across extension reloads, but will refuse to overwrite files if subsequent external manual edits were made.
 - **Approved operation guard**: To prevent duplicate external mutations, automatic retry and fallback are disabled once an approval has been granted for a write or command; cancelled or failed runs can retain previously approved effects.
-- **Provider outage**: If primary and fallback agents share the same provider endpoint, an account-level quota exhaustion or provider-wide outage will impact both models.
+- **Provider rate limits**: Primary (Google Gemini) and fallback (NVIDIA NIM) run on independent providers to protect against single-provider outages, but each remains subject to its respective provider quotas and rate limits.
 - **Context estimation**: Token budgeting uses a character-based heuristic (~4 characters per token) rather than provider-specific BPE tokenizers.
 - **Single active request**: Only one request can be processed per workspace at a time.
 - **Dynamic subagents**: Subagent handling is implemented and tested, but subagent spawning is dynamic and may not trigger on smaller tasks within token limits.
