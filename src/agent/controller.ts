@@ -38,9 +38,10 @@ export function sanitizeReason(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   let firstLine = raw.split(/[\r\n]+/)[0]?.trim() || 'unknown error';
   firstLine = firstLine
-    .replace(/(?:Bearer\s+|(?:api[-_ ]?)?token\s*[:=]?\s*|key\s*[:=]\s*)[a-zA-Z0-9_\-\.]+/gi, '[REDACTED]')
+    .replace(/\s+at\s+(?:[a-zA-Z0-9_$.<>]+\s+)?\(?(?:node:|[A-Za-z]:[\\/]|(?:\.?[\\/])|\S+\.[a-zA-Z0-9]+:\d+|internal\/).*/g, '')
+    .replace(/(?:Bearer\s+|(?:api[-_ ]?)?token\s*[:=]?\s*|(?:api[-_ ]?)?(?:key|secret)\s*[:=]\s*)[a-zA-Z0-9_\-\.]+/gi, '[REDACTED]')
     .replace(/authorization:\s*[^\s]+/gi, 'authorization: [REDACTED]')
-    .replace(/\b(?:sk-|gsk_|AIza)[A-Za-z0-9_-]{12,}\b/g, '[REDACTED]')
+    .replace(/\b(?:sk-|gsk_|AIza)[A-Za-z0-9_-]{10,}\b/g, '[REDACTED]')
     .trim();
   if (firstLine.length > 120) {
     firstLine = firstLine.slice(0, 117) + '...';
@@ -114,7 +115,11 @@ export class AgentController {
       if (e instanceof CancelledError) ui.finished(this.cancelInfo());
       else {
         const base = e instanceof ForgeFailure ? e.message : `Forge could not complete the request (${sanitizeReason(e)}).`;
-        ui.finished({ status: 'error', message: `${base} ${this.approvedOperations ? `${this.approvedOperations} approved operation(s) may have completed; inspect the workspace and use "Forge: Undo last applied change" to revert.` : 'No changes were made to your workspace.'}` });
+        const alreadyMentionsWorkspace = /no (?:files|changes) were (?:changed|made)/i.test(base);
+        const suffix = alreadyMentionsWorkspace
+          ? ''
+          : ` ${this.approvedOperations ? `${this.approvedOperations} approved operation(s) may have completed; inspect the workspace and use "Forge: Undo last applied change" to revert.` : 'No changes were made to your workspace.'}`;
+        ui.finished({ status: 'error', message: `${base}${suffix}` });
       }
     } finally {
       this.d.approvals.cancelAll();

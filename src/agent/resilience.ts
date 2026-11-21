@@ -21,12 +21,16 @@ export interface FallbackOptions<T> {
 /** Short, stack-free reason for the one error message the user sees. */
 export function briefReason(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
-  return raw.split('\n')[0]!
+  let line = raw.split(/[\r\n]+/)[0]!.trim();
+  line = line
+    .replace(/\s+at\s+(?:[a-zA-Z0-9_$.<>]+\s+)?\(?(?:node:|[A-Za-z]:[\\/]|(?:\.?[\\/])|\S+\.[a-zA-Z0-9]+:\d+|internal\/).*/g, '')
     .replace(/\s+/g, ' ')
-    .replace(/(?:Bearer\s+|(?:api[-_ ]?)?token\s*[:=]?\s*|key\s*[:=]\s*)[a-zA-Z0-9_\-\.]+/gi, '[REDACTED]')
+    .replace(/(?:Bearer\s+|(?:api[-_ ]?)?token\s*[:=]?\s*|(?:api[-_ ]?)?(?:key|secret)\s*[:=]\s*)[a-zA-Z0-9_\-\.]+/gi, '[REDACTED]')
     .replace(/authorization:\s*[^\s]+/gi, 'authorization: [REDACTED]')
-    .replace(/\b(?:sk-|gsk_|AIza)[A-Za-z0-9_-]{12,}\b/g, '[REDACTED]')
+    .replace(/\b(?:sk-|gsk_|AIza)[A-Za-z0-9_-]{10,}\b/g, '[REDACTED]')
+    .trim()
     .slice(0, 160);
+  return line;
 }
 
 /** Quota retry hints can arrive in turn.done text rather than HTTP headers. */
@@ -38,6 +42,15 @@ function retryDelay(error: unknown, exponentialMs: number): number {
   const seconds = Number(hint[1]);
   if (!Number.isFinite(seconds)) return Math.min(12_000, exponentialMs);
   return Math.max(exponentialMs, Math.min(12_000, Math.ceil(seconds * 1000) + 250));
+}
+
+/** Detects HTTP 429 quota / rate limit errors. */
+export function isQuotaError(err: unknown): boolean {
+  if (!err) return false;
+  const status = (err as any)?.status ?? (err as any)?.statusCode ?? (err as any)?.response?.status;
+  if (status === 429) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b429\b|rate[-_ ]?limit|quota|too many requests|resource[ _]exhausted/i.test(message);
 }
 
 /** Permanent errors that should fail fast without retrying. */
@@ -59,6 +72,8 @@ export function isPermanentError(err: unknown): boolean {
 export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
   const agents = [o.primary, ...(o.fallback && o.fallback !== o.primary ? [o.fallback] : [])];
   let lastErr: unknown;
+  let primaryErr: unknown;
+  let fallbackErr: unknown;
   let primaryRetried = false;
 
   for (let a = 0; a < agents.length; a++) {
@@ -72,6 +87,8 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
         return await o.attempt(agent);
       } catch (e) {
         lastErr = e;
+        if (a === 0) primaryErr = e;
+        else fallbackErr = e;
         if (o.isCancelled()) throw new CancelledError();
         if (o.canRetry && !o.canRetry()) throw new ForgeFailure('The run stopped after an approved operation; automatic replay was skipped.');
         if (a === 0 && o.shouldFallbackImmediately?.(e)) break;
@@ -91,7 +108,13 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
     }
     if (a === 0 && agents.length > 1) o.onFallback?.(lastErr);
   }
-  throw new ForgeFailure(agents.length > 1
-    ? `Both the primary and fallback models failed (${briefReason(lastErr)}).`
-    : `The model request failed (${briefReason(lastErr)}).`);
+  if (agents.length > 1) {
+    if (isQuotaError(primaryErr) || isQuotaError(fallbackErr)) {
+      throw new ForgeFailure(
+        `Primary model failed (${briefReason(primaryErr ?? lastErr)}); fallback model failed (${briefReason(fallbackErr ?? lastErr)}). No files were changed.`
+      );
+    }
+    throw new ForgeFailure(`Both the primary and fallback models failed (${briefReason(lastErr)}).`);
+  }
+  throw new ForgeFailure(`The model request failed (${briefReason(lastErr)}).`);
 }

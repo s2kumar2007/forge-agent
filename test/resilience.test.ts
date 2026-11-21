@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { runWithFallback, ForgeFailure, CancelledError } from '../src/agent/resilience';
+import { runWithFallback, ForgeFailure, CancelledError, isQuotaError, briefReason } from '../src/agent/resilience';
 import { AgentController, sanitizeReason } from '../src/agent/controller';
 import { ReviewApprovals } from '../src/review/approvals';
 import { DecisionStore } from '../src/review/decisions';
@@ -321,4 +321,74 @@ it('allows fallback retries when primary failed fast on permanent error', async 
   expect(await runWithFallback(o)).toBe('ok');
   expect(calls).toEqual(['p', 'f', 'f']);
   expect(sleeps).toEqual([1000]);
+});
+
+describe('quota failure messages (ITEM 2)', () => {
+  const build = (root: string, tf: FakeTrueForge) => {
+    const approvals = new ReviewApprovals({ root, ui: { reviewHunks: async () => [], confirmCommand: async () => false, close() {} }, store: new DecisionStore(), readText: async () => undefined });
+    return new AgentController({ getClient: () => tf.client, approvals, agents: () => ({ primary: 'forge-agent', fallback: 'forge-agent-fallback' }), retries: 2, backoffMs: 1, sleep: async () => {} });
+  };
+
+  it('detects quota errors accurately', () => {
+    expect(isQuotaError(new Error('HTTP 429: Too Many Requests'))).toBe(true);
+    expect(isQuotaError(new Error('Rate limit reached for model qwen'))).toBe(true);
+    expect(isQuotaError(new Error('Quota exceeded for metric'))).toBe(true);
+    expect(isQuotaError({ status: 429 })).toBe(true);
+    expect(isQuotaError(new Error('Resource exhausted'))).toBe(true);
+    expect(isQuotaError(new Error('500 Internal Server Error'))).toBe(false);
+    expect(isQuotaError(new Error('401 Unauthorized'))).toBe(false);
+    expect(isQuotaError(undefined)).toBe(false);
+  });
+
+  it('redacts secrets and strips stack traces in briefReason', () => {
+    const err = new Error('429 rate limit: Bearer gsk_1234567890abcdef\n    at fetch (node:internal/deps/undici:123)');
+    const sanitized = briefReason(err);
+    expect(sanitized).not.toContain('gsk_1234567890abcdef');
+    expect(sanitized).not.toContain('at fetch');
+    expect(sanitized).not.toContain('node:internal');
+    expect(sanitized).toContain('[REDACTED]');
+  });
+
+  it('when primary fails with 429 quota and fallback fails with 429 quota, shows one clear panel message naming both failures and saying no files were changed', async () => {
+    const { root, gitStatus } = tempRepo();
+    const primaryBoom = () => { throw new Error('429: Rate limit reached for model gemini: key: secret_key_gemini_123\n    at node:internal'); };
+    const fallbackBoom = () => { throw new Error('429: Quota exceeded for model groq: Bearer gsk_groq_secret_456\n    at providerCall (src/api.ts:10)'); };
+    const tf = new FakeTrueForge({ 'forge-agent': [primaryBoom, primaryBoom, primaryBoom], 'forge-agent-fallback': [fallbackBoom, fallbackBoom, fallbackBoom] });
+    const ui = new RecordingUi();
+    await build(root, tf).run('modify code', ui);
+
+    expect(ui.result?.status).toBe('error');
+    expect(ui.result?.message).toBe('Primary model failed (429: Rate limit reached for model gemini: [REDACTED]); fallback model failed (429: Quota exceeded for model groq: [REDACTED]). No files were changed.');
+    expect(ui.result?.message).not.toContain('secret_key_gemini_123');
+    expect(ui.result?.message).not.toContain('gsk_groq_secret_456');
+    expect(ui.result?.message).not.toContain('node:internal');
+    expect(ui.result?.message).not.toContain('providerCall');
+    expect(gitStatus()).toBe('');
+  });
+
+  it('when primary fails with 429 quota and fallback fails with a server error, names both failures in plain words and says no files were changed', async () => {
+    const { root, gitStatus } = tempRepo();
+    const primaryBoom = () => { throw new Error('429 Too Many Requests: free-tier quota exhausted'); };
+    const fallbackBoom = () => { throw new Error('HTTP 503 Service Unavailable'); };
+    const tf = new FakeTrueForge({ 'forge-agent': [primaryBoom, primaryBoom, primaryBoom], 'forge-agent-fallback': [fallbackBoom, fallbackBoom, fallbackBoom] });
+    const ui = new RecordingUi();
+    await build(root, tf).run('modify code', ui);
+
+    expect(ui.result?.status).toBe('error');
+    expect(ui.result?.message).toBe('Primary model failed (429 Too Many Requests: free-tier quota exhausted); fallback model failed (HTTP 503 Service Unavailable). No files were changed.');
+    expect(gitStatus()).toBe('');
+  });
+
+  it('when primary fails with server error and fallback fails with 429 quota, names both failures in plain words and says no files were changed', async () => {
+    const { root, gitStatus } = tempRepo();
+    const primaryBoom = () => { throw new Error('HTTP 500 Internal Server Error'); };
+    const fallbackBoom = () => { throw new Error('429 rate limit exceeded'); };
+    const tf = new FakeTrueForge({ 'forge-agent': [primaryBoom], 'forge-agent-fallback': [fallbackBoom, fallbackBoom, fallbackBoom] });
+    const ui = new RecordingUi();
+    await build(root, tf).run('modify code', ui);
+
+    expect(ui.result?.status).toBe('error');
+    expect(ui.result?.message).toBe('Primary model failed (HTTP 500 Internal Server Error); fallback model failed (429 rate limit exceeded). No files were changed.');
+    expect(gitStatus()).toBe('');
+  });
 });
