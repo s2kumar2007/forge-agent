@@ -52,9 +52,9 @@ Before executing a turn in Agent mode, Forge Agent automatically gathers relevan
 ## Model setup
 
 - **Models used**:
-  - Primary agent (`forge-agent`): Groq `openai/gpt-oss-120b` (configured name: `groq/gpt-oss-120b`), temperature 0.2, serialized tool calls (`parallel_tool_calls: false`).
-  - Inline agent (`forge-inline`): Groq `openai/gpt-oss-120b` (configured name: `groq/gpt-oss-120b`), temperature 0.2.
-  - Fallback agent (`forge-agent-fallback`): Google Gemini `google-gemini/gemini-3-5-flash`, temperature 0.2, `reasoning_effort: "low"`, `max_tokens: 10000`.
+  - Primary agent (`forge-agent`): Google Gemini `google-gemini/gemini-3-5-flash`, temperature 0.2, serialized tool calls (`parallel_tool_calls: false`), `reasoning_effort: "low"`, `max_tokens: 10000`.
+  - Inline agent (`forge-inline`): Google Gemini `google-gemini/gemini-3-5-flash`, temperature 0.2.
+  - Fallback agent (`forge-agent-fallback`): NVIDIA NIM `meta/llama-3.3-70b-instruct` (configured name: `forge-fallback/meta/llama-3.3-70b-instruct`), temperature 0.2, `max_tokens: 8000`.
 - **Where they run**: Models run on Groq and Google cloud APIs. TrueForge and the Groq compatibility adapter (`scripts/groq-adapter.cjs`) run locally on `127.0.0.1`.
 - **Cost**: Groq free tier, approximately INR 0.
 - **How to switch models**:
