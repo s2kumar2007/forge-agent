@@ -47,6 +47,9 @@ export interface ControllerDeps {
   circuitBreakerDurationMs?: number;
   onMetrics?: (metrics: RunMetrics) => void;
   logMetrics?: (summary: string) => void;
+  faultInjection?: string | boolean;
+  verifyAndRepair?: () => Promise<{ ok: boolean; errors?: string }>;
+  maxRepairRounds?: number;
 }
 
 export function sanitizeReason(err: unknown): string {
@@ -233,6 +236,23 @@ export class AgentController {
     this.sessionId = undefined;
     await this.d.prepare?.();
     if (this.cancelled) return 'cancelled';
+
+    if (this.d.faultInjection && this.d.faultInjection !== 'none' && agent === this.d.agents().primary) {
+      const mode = String(this.d.faultInjection);
+      if (mode === 'auth' || mode === 'true') {
+        throw new Error('HTTP 401 Unauthorized (fault injection)');
+      }
+      if (mode === 'network') {
+        throw new Error('ECONNREFUSED 127.0.0.1:8790 (fault injection)');
+      }
+      if (mode === 'server') {
+        throw new Error('HTTP 500 Internal Server Error (fault injection)');
+      }
+      if (mode === 'timeout') {
+        throw new Error('Connection timeout (fault injection)');
+      }
+    }
+
     const client = this.d.getClient();
     let sid = typeof this.d.sessionId === 'function' ? this.d.sessionId() : this.d.sessionId;
     if (!sid) {
@@ -250,6 +270,8 @@ export class AgentController {
     let hadProposeWrite = false;
     let readOnlyToolCalls = 0;
     let readOnlyReminderEmitted = false;
+    let repairRounds = 0;
+    const maxRepairRounds = this.d.maxRepairRounds ?? 2;
 
     for (let round = 0; round < 200; round++) {
       metricsCollector?.recordModelTurn();
@@ -351,6 +373,15 @@ export class AgentController {
       }
       if (res.status === 'done') {
         metricsCollector?.setAgentAnswered(agent);
+        if (hadProposeWrite && this.approvedOperations > 0 && repairRounds < maxRepairRounds && this.d.verifyAndRepair) {
+          const v = await this.d.verifyAndRepair();
+          if (!v.ok && v.errors) {
+            repairRounds++;
+            ui.notice(`Verification detected errors (repair round ${repairRounds}/${maxRepairRounds}). Repairing...`);
+            input = [{ type: 'user.message', content: `## Verification Errors\n${v.errors}\n\nPlease fix the errors above using propose_write.` }];
+            continue;
+          }
+        }
         const isFallback = agent === this.d.agents().fallback;
         if (isFallback && hadToolCalls && !hadProposeWrite) {
           ui.notice('Fallback model stopped early');

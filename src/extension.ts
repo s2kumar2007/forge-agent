@@ -48,11 +48,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     prepare: ensureReady,
     getClient: () => createClient(getConfig().baseUrl),
     approvals,
-    agents: () => ({ primary: getConfig().agentName, fallback: getConfig().fallbackAgentName, fallbackModel }),
+    agents: () => ({ primary: getConfig().agentName, fallback: getConfig().fallbackAgentName, fallbackModel: getConfig().fallbackModel ?? fallbackModel }),
     onRunStart: () => { api?.beginRun(); resetToolRunState(); },
     onCancel: () => { store.clear(); api?.cancelCommands(); },
     logError: (err) => { outputChannel.appendLine(err instanceof Error ? (err.stack ?? err.message) : String(err)); },
     logMetrics: (summary) => { outputChannel.appendLine(summary); },
+    faultInjection: getConfig().faultInjection,
+    verifyAndRepair: async () => {
+      if (!api) return { ok: true };
+      const diags = await api.getDiagnostics(undefined, 'error');
+      if (diags.length > 0) {
+        return {
+          ok: false,
+          errors: diags.map((d) => `[ERROR] ${d.path}:${d.line}:${d.column} - ${d.message}`).join('\n'),
+        };
+      }
+      return { ok: true };
+    },
   });
 
   ctx.subscriptions.push(

@@ -62,7 +62,7 @@ export class ReviewPanel implements ReviewUi {
         else if (m.type === 'confirm') finish([...state].filter(([, v]) => v).map(([k]) => k));
         else if (m.type === 'cancel') finish([]);
       });
-      void panel.webview.postMessage({ type: 'init', path: req.relPath, rationale: req.rationale, isNew: req.isNew, hunks: req.hunks });
+      void panel.webview.postMessage({ type: 'init', path: req.relPath, rationale: req.rationale, isNew: req.isNew, hunks: req.hunks, confidence: req.confidence });
       void vscode.commands.executeCommand('vscode.diff', left, right, `Forge: ${req.relPath} (proposed)`, { preview: true });
     });
   }

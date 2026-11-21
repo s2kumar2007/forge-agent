@@ -1,11 +1,12 @@
 import type { ApprovalDecision, ApprovalHandler, ToolCallInfo } from '../agent/types';
 import { computeHunks, normalizeEol, type Hunk } from './hunks';
+import { computeChangeConfidence, type ConfidenceScore } from './confidence';
 import { materializeWrite } from './proposal';
 import { DecisionStore, proposalKey } from './decisions';
 import { PathError, resolveInsideReal, toRel } from '../workspace/paths';
 import { validateCommandPaths, detectTestCommand } from '../workspace/runCommand';
 
-export interface ReviewRequest { relPath: string; rationale: string; oldText: string; newText: string; hunks: Hunk[]; isNew: boolean }
+export interface ReviewRequest { relPath: string; rationale: string; oldText: string; newText: string; hunks: Hunk[]; isNew: boolean; confidence?: ConfidenceScore }
 
 /** The visual part (diff editor + hunk list). Implemented with VS Code APIs elsewhere. */
 export interface ReviewUi {
@@ -60,8 +61,9 @@ export class ReviewApprovals implements ApprovalHandler {
     const reviewedText = normalizeEol(oldText, new_content);
     const hunks = computeHunks(oldText, reviewedText);
     if (hunks.length === 0) return { status: 'deny', reason: 'The proposed content is identical to the current file; nothing to change.' };
+    const confidence = computeChangeConfidence({ oldText, newText: reviewedText, hunks, isNew: existing === undefined });
 
-    const accepted = await this.d.ui.reviewHunks({ relPath: toRel(this.d.root, abs), rationale: String(rationale ?? ''), oldText, newText: reviewedText, hunks, isNew: existing === undefined }, signal);
+    const accepted = await this.d.ui.reviewHunks({ relPath: toRel(this.d.root, abs), rationale: String(rationale ?? ''), oldText, newText: reviewedText, hunks, isNew: existing === undefined, confidence }, signal);
     if (signal.aborted) return { status: 'deny', reason: 'Cancelled.' };
     if (accepted.length === 0) return { status: 'deny', reason: 'The user rejected all hunks.' };
 
@@ -124,6 +126,7 @@ export class ReviewApprovals implements ApprovalHandler {
     let totalAccepted = 0;
     for (const p of prepared) {
       if (signal.aborted) return { status: 'deny', reason: 'Cancelled.' };
+      const confidence = computeChangeConfidence({ oldText: p.oldText, newText: p.newText, hunks: p.hunks, isNew: p.isNew });
       const accepted = await this.d.ui.reviewHunks({
         relPath: p.rel,
         rationale: String(rationale ?? ''),
@@ -131,6 +134,7 @@ export class ReviewApprovals implements ApprovalHandler {
         newText: p.newText,
         hunks: p.hunks,
         isNew: p.isNew,
+        confidence,
       }, signal);
       if (signal.aborted) return { status: 'deny', reason: 'Cancelled.' };
       if (accepted.length > 0) {

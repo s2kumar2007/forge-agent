@@ -7,8 +7,10 @@ export function getConfig() {
     baseUrl: c.get<string>('baseUrl', 'http://localhost:8790'),
     agentName: c.get<string>('agentName', 'forge-agent'),
     fallbackAgentName: c.get<string>('fallbackAgentName', 'forge-agent-fallback'),
+    fallbackModel: c.get<string>('fallbackModel', 'google-gemini/gemini-3-8-flash'),
     contextBudget: Math.max(500, c.get<number>('contextBudget', 2000)),
     fallbackContextBudget: Math.max(500, c.get<number>('fallbackContextBudget', 1500)),
     explorationBudget: Math.max(1, c.get<number>('explorationBudget', 12)),
+    faultInjection: c.get<string>('faultInjection', 'none'),
   };
 }

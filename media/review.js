@@ -20,7 +20,8 @@ function paint(id) {
 window.addEventListener('message', ({ data: m }) => {
   if (m.type === 'init') {
     document.getElementById('title').textContent = (m.isNew ? 'New file: ' : 'Edit: ') + m.path;
-    document.getElementById('why').textContent = m.rationale || '';
+    const confText = m.confidence ? ` · Confidence: [${m.confidence.tag}] (${m.confidence.score}%)` : '';
+    document.getElementById('why').textContent = (m.rationale || '') + confText;
     for (const h of m.hunks) {
       accepted.set(h.id, true);
       const box = document.createElement('div'); box.className = 'hunk';

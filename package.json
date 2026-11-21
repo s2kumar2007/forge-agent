@@ -52,6 +52,11 @@
           "default": "forge-agent-fallback",
           "description": "Agent used when the primary fails (different model/provider)."
         },
+        "forge.fallbackModel": {
+          "type": "string",
+          "default": "google-gemini/gemini-3-8-flash",
+          "description": "Configurable model identifier for the fallback provider."
+        },
         "forge.contextBudget": {
           "type": "number",
           "default": 2000,
@@ -69,6 +74,12 @@
           "default": 12,
           "minimum": 1,
           "description": "Exploration budget: maximum read-only tool calls (read_file, search_workspace, list_dir) allowed per run."
+        },
+        "forge.faultInjection": {
+          "type": "string",
+          "enum": ["none", "auth", "network", "server", "timeout"],
+          "default": "none",
+          "description": "Simulate primary provider failures to verify automatic fallback without breaking API keys."
         }
       }
     },
