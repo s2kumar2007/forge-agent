@@ -215,6 +215,52 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     return ok(res);
   }));
 
+  mcp.registerTool('propose_changes', {
+    description: 'Propose atomic reviewed edits across multiple files in a single operation. Takes changes: [{ path, edits | new_content | search & replace | startLine & endLine & newText }], plus rationale. All files undergo hunk review before changes are applied.',
+    inputSchema: {
+      changes: z.array(z.object({
+        path: z.string(),
+        new_content: z.string().optional(),
+        newContent: z.string().optional(),
+        edits: z.array(z.object({
+          old_text: z.string().optional(),
+          new_text: z.string().optional(),
+          search: z.string().optional(),
+          replace: z.string().optional(),
+          startLine: z.number().int().optional(),
+          endLine: z.number().int().optional(),
+          newText: z.string().optional(),
+        })).min(1).max(20).optional(),
+        search: z.string().optional(),
+        replace: z.string().optional(),
+        startLine: z.number().int().optional(),
+        endLine: z.number().int().optional(),
+        newText: z.string().optional(),
+      })).min(1).max(20),
+      rationale: z.string(),
+    },
+  }, (args) => guarded(async () => {
+    const dup = checkDuplicateCall('propose_changes', args);
+    if (dup) return dup;
+    const results: string[] = [];
+    for (const change of args.changes) {
+      if (isSecretPath(change.path)) return fail(`blocked: secret-like file (${change.path})`);
+      const abs = await resolveInsideReal(root, change.path);
+      if (isSecretPath(toRel(root, abs))) return fail(`blocked: secret-like file (${change.path})`);
+      const current = await api.readText(abs);
+      if (current !== undefined && readHashes.has(abs)) {
+        if (hashContent(current) !== readHashes.get(abs)) {
+          return fail(`Stale file: "${change.path}" was modified after it was read. Re-read the file before proposing changes.`);
+        }
+      }
+      const candidate = materializeWrite(current, change);
+      const res = await api.applyProposal(abs, candidate);
+      readHashes.set(abs, hashContent(candidate));
+      results.push(`${toRel(root, abs)}: ${res}`);
+    }
+    return ok(`Applied changes to ${results.length} file(s):\n${results.join('\n')}`);
+  }));
+
   mcp.registerTool('run_command', {
     description: 'Run a shell command in the workspace root (e.g. tests). Requires user approval. Output is truncated to 8KB; 120s timeout.',
     inputSchema: { command: z.string().min(1) },

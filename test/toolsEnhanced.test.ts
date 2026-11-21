@@ -93,4 +93,33 @@ describe('enhanced propose_write and stale file guard', () => {
     expect(writeRes.isError).toBeFalsy();
     expect(appliedProposal).toBe('first two lines replaced\nline 3\n');
   });
+
+  it('supports propose_changes tool across multiple files atomically', async () => {
+    const files: Record<string, string> = {
+      'a.txt': 'apple\n',
+      'b.txt': 'banana\n',
+    };
+    (mockApi as any).readText = async (abs: string) => {
+      const rel = path.relative(root, abs).replace(/\\/g, '/');
+      return files[rel];
+    };
+    (mockApi as any).applyProposal = async (abs: string, candidate: string) => {
+      const rel = path.relative(root, abs).replace(/\\/g, '/');
+      files[rel] = candidate;
+      return 'applied';
+    };
+
+    const res = await callTool('propose_changes', {
+      changes: [
+        { path: 'a.txt', search: 'apple', replace: 'apricot', rationale: 'update a' },
+        { path: 'b.txt', search: 'banana', replace: 'blueberry', rationale: 'update b' },
+      ],
+      rationale: 'Update both fruits',
+    });
+
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text).toContain('Applied changes to 2 file(s)');
+    expect(files['a.txt']).toBe('apricot\n');
+    expect(files['b.txt']).toBe('blueberry\n');
+  });
 });

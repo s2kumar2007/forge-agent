@@ -73,7 +73,7 @@ function sleepForRetry(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-const isMutatingTool = (n: string) => /(?:propose_write|run_command)$/.test(n);
+const isMutatingTool = (n: string) => /(?:propose_write|propose_changes|run_command|run_tests)$/.test(n);
 
 /**
  * Drives one user request end to end: session -> turn -> (approvals -> new turn)* -> done.
@@ -263,7 +263,7 @@ export class AgentController {
         onToolCall: (n) => {
           hadToolCalls = true;
           metricsCollector?.recordToolStart(n);
-          if (n === 'propose_write') hadProposeWrite = true;
+          if (n === 'propose_write' || n === 'propose_changes') hadProposeWrite = true;
           if (!isMutatingTool(n)) {
             turnReadOnlyCalls++;
             readOnlyToolCalls++;
@@ -288,11 +288,11 @@ export class AgentController {
           for (const tc of ev.toolCalls ?? []) {
             hadToolCalls = true;
             const name = toolName(tc);
-            if (name === 'propose_write') hadProposeWrite = true;
+            if (name === 'propose_write' || name === 'propose_changes') hadProposeWrite = true;
             if (name === 'call_tool' || tc.function?.name === 'call_tool') {
               try {
                 const parsed = JSON.parse(tc.function?.arguments || '{}');
-                if (parsed.tool_name === 'propose_write' || parsed.input?.tool_name === 'propose_write') {
+                if (parsed.tool_name === 'propose_write' || parsed.tool_name === 'propose_changes' || parsed.input?.tool_name === 'propose_write' || parsed.input?.tool_name === 'propose_changes') {
                   hadProposeWrite = true;
                 }
               } catch {}
@@ -321,7 +321,7 @@ export class AgentController {
 
         for (const a of res.approvals) {
           const info = describeToolCall(res.events, a);
-          if (info?.name === 'propose_write') hadProposeWrite = true;
+          if (info?.name === 'propose_write' || info?.name === 'propose_changes') hadProposeWrite = true;
           const decision = info
             ? await this.d.approvals.decide(info, this.abort.signal)
             : { status: 'deny' as const, reason: 'Could not read the tool call arguments.' };

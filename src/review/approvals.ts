@@ -25,6 +25,7 @@ export class ReviewApprovals implements ApprovalHandler {
   async decide(call: ToolCallInfo, signal: AbortSignal): Promise<ApprovalDecision> {
     if (signal.aborted) return { status: 'deny', reason: 'Cancelled.' };
     if (is(call.name, 'propose_write')) return this.decideWrite(call, signal);
+    if (is(call.name, 'propose_changes')) return this.decideChanges(call, signal);
     if (is(call.name, 'run_command')) {
       const cmd = String(call.args.command ?? '');
       if (!cmd) return { status: 'deny', reason: 'Empty command.' };
@@ -58,6 +59,87 @@ export class ReviewApprovals implements ApprovalHandler {
 
     // The MCP handler looks this up when TrueForge executes the (now allowed) call.
     this.d.store.put(proposalKey(abs, new_content), { baseText: oldText, newText: reviewedText, acceptedHunks: accepted, totalHunks: hunks.length });
+    return { status: 'allow' };
+  }
+
+  private async decideChanges(call: ToolCallInfo, signal: AbortSignal): Promise<ApprovalDecision> {
+    const { changes, rationale } = call.args;
+    if (!Array.isArray(changes) || changes.length === 0) {
+      return { status: 'deny', reason: 'Invalid propose_changes arguments: changes array is required.' };
+    }
+
+    interface PreparedChange {
+      abs: string;
+      rel: string;
+      oldText: string;
+      newText: string;
+      hunks: Hunk[];
+      isNew: boolean;
+      candidate: string;
+    }
+
+    const prepared: PreparedChange[] = [];
+
+    for (const change of changes) {
+      if (typeof change !== 'object' || change === null || typeof change.path !== 'string') {
+        return { status: 'deny', reason: 'Invalid change: path is required.' };
+      }
+      let abs: string;
+      try { abs = await resolveInsideReal(this.d.root, change.path); }
+      catch (e) { return { status: 'deny', reason: e instanceof PathError ? e.message : 'Invalid path.' }; }
+
+      const existing = await this.d.readText(abs);
+      let candidate: string;
+      try { candidate = materializeWrite(existing, change); }
+      catch (error) { return { status: 'deny', reason: error instanceof Error ? error.message : 'Invalid proposal in changes.' }; }
+
+      const oldText = existing ?? '';
+      const reviewedText = normalizeEol(oldText, candidate);
+      const hunks = computeHunks(oldText, reviewedText);
+      if (hunks.length > 0) {
+        prepared.push({
+          abs,
+          rel: toRel(this.d.root, abs),
+          oldText,
+          newText: reviewedText,
+          hunks,
+          isNew: existing === undefined,
+          candidate,
+        });
+      }
+    }
+
+    if (prepared.length === 0) {
+      return { status: 'deny', reason: 'The proposed changes are identical to current files; nothing to change.' };
+    }
+
+    let totalAccepted = 0;
+    for (const p of prepared) {
+      if (signal.aborted) return { status: 'deny', reason: 'Cancelled.' };
+      const accepted = await this.d.ui.reviewHunks({
+        relPath: p.rel,
+        rationale: String(rationale ?? ''),
+        oldText: p.oldText,
+        newText: p.newText,
+        hunks: p.hunks,
+        isNew: p.isNew,
+      }, signal);
+      if (signal.aborted) return { status: 'deny', reason: 'Cancelled.' };
+      if (accepted.length > 0) {
+        totalAccepted += accepted.length;
+        this.d.store.put(proposalKey(p.abs, p.candidate), {
+          baseText: p.oldText,
+          newText: p.newText,
+          acceptedHunks: accepted,
+          totalHunks: p.hunks.length,
+        });
+      }
+    }
+
+    if (totalAccepted === 0) {
+      return { status: 'deny', reason: 'The user rejected all hunks across all proposed files.' };
+    }
+
     return { status: 'allow' };
   }
 }

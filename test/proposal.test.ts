@@ -103,3 +103,45 @@ it('supports line range insertion and bounds validation', () => {
   expect(() => materializeWrite(oldText, { startLine: 0, endLine: 2, newText: 'x' })).toThrow(/out of bounds/);
   expect(() => materializeWrite(oldText, { startLine: 2, endLine: 5, newText: 'x' })).toThrow(/out of bounds/);
 });
+
+it('supports propose_changes across multiple files with combined review', async () => {
+  const store = new DecisionStore();
+  const root = os.tmpdir();
+  const file1 = path.join(root, 'f1.txt');
+  const file2 = path.join(root, 'f2.txt');
+  const files: Record<string, string> = {
+    [file1]: 'hello file 1\n',
+    [file2]: 'hello file 2\n',
+  };
+
+  const reviewedFiles: string[] = [];
+  const approvals = new ReviewApprovals({
+    root,
+    store,
+    readText: async (abs) => files[abs],
+    ui: {
+      reviewHunks: async (req) => {
+        reviewedFiles.push(req.relPath);
+        return [1];
+      },
+      confirmCommand: async () => false,
+      close() {},
+    },
+  });
+
+  const res = await approvals.decide({
+    name: 'propose_changes',
+    args: {
+      changes: [
+        { path: 'f1.txt', search: 'hello', replace: 'hi', rationale: 'update f1' },
+        { path: 'f2.txt', search: 'hello', replace: 'hey', rationale: 'update f2' },
+      ],
+      rationale: 'multi-file change',
+    },
+  }, new AbortController().signal);
+
+  expect(res.status).toBe('allow');
+  expect(reviewedFiles).toEqual(['f1.txt', 'f2.txt']);
+  expect(store.take(proposalKey(file1, 'hi file 1\n'))).toBeDefined();
+  expect(store.take(proposalKey(file2, 'hey file 2\n'))).toBeDefined();
+});
