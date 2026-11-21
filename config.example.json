@@ -5,6 +5,20 @@
   "forge.fallbackAgentName": "forge-agent-fallback",
   "providers": [
     {
+      "type": "custom",
+      "name": "forge-nvidia",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "auth": {
+        "api_key": "<nvidia-nim-api-key-placeholder-only>"
+      },
+      "models": [
+        {
+          "name": "nemotron-3-5-lightning-30b-a3b",
+          "model_id": "nvidia/nemotron-3.5-lightning-30b-a3b"
+        }
+      ]
+    },
+    {
       "type": "google",
       "name": "google-gemini",
       "auth": {
@@ -12,22 +26,8 @@
       },
       "models": [
         {
-          "name": "gemini-2-5-flash",
-          "model_id": "gemini-2.5-flash"
-        }
-      ]
-    },
-    {
-      "type": "custom",
-      "name": "forge-fallback",
-      "base_url": "https://integrate.api.nvidia.com/v1",
-      "auth": {
-        "api_key": "<nvidia-nim-api-key-placeholder-only>"
-      },
-      "models": [
-        {
-          "name": "mistral-large-4-1t-a52b",
-          "model_id": "mistralai/mistral-large-4-1t-a52b"
+          "name": "gemini-3-8-flash",
+          "model_id": "gemini-3.8-flash"
         }
       ]
     },
@@ -43,5 +43,5 @@
       ]
     }
   ],
-  "credentialSetup": "Configure Google Gemini provider in TrueForge for the primary and inline models. For the fallback provider (NVIDIA NIM), set FALLBACK_BASE_URL (https://integrate.api.nvidia.com/v1), FALLBACK_MODEL (e.g. mistralai/mistral-large-4-1t-a52b) and FALLBACK_API_KEY, then run node scripts/configure-fallback.cjs. Groq is optional. Credentials are stored by TrueForge, not in this file."
+  "credentialSetup": "Configure NVIDIA NIM provider in TrueForge or using node scripts/configure-provider.cjs for the primary and inline models (PROVIDER_BASE_URL=https://integrate.api.nvidia.com/v1, PROVIDER_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b). Configure Google Gemini provider in TrueForge for the fallback model (google-gemini/gemini-3-8-flash). Groq is optional and not used on the default path. Credentials are stored by TrueForge, not in this file."
 }
