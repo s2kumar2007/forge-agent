@@ -1,17 +1,33 @@
 # Submission status
 
-Verified on 31 October 2026. Team Git Push, VIT Vellore: B. Sunil Kumar, Eric Bejoy, Sreekeerthana Adapa, Samyuktha BR.
+Team: Git Push, VIT Vellore  
+Members: B. Sunil Kumar (Team Leader), Eric Bejoy, Ashmit Sharma, Shaurya Singla.
+
+## Current project state
+
+- **Code state**: Frozen. Core architecture, MCP tools, review panel, context assembly, and resilience loop are complete and verified.
+- **Merged PRs on main**:
+  - PR #1 (`feature/opt-in-fallback-provider`): Opt-in secondary provider fallback configuration, 5xx server error failover, and replay guards after approvals.
+  - PR #2 (`shaurya/context-visibility`): Context token budgeting visibility, session ID display, and real compaction/subagent lifecycle streaming in the chat panel.
+  - PR #3 (`copilot/fix-verify-job-failure`): Ripgrep cancellation test fixes across Linux, macOS, and Windows runners.
+- **Test suite**: **159 passing tests across 21 test files** via Vitest (`npm test`).
+- **Build health**: Clean typecheck (`npm run typecheck`) and production build (`npm run build`).
 
 | Item | State | Evidence |
 |---|---|---|
-| Typecheck / unit tests / build | Pass: 120 tests | docs/AUDIT.md |
-| Windows / macOS / Linux CI | Pass for 80039e0 | docs/ci-groq-results.json |
-| Windows package / installation / native editing | Pass: final packaged extension installs, activates offline, and passes native editor checks | docs/vsix-final-package-results.json; docs/vsix-final-native-results.json |
-| Official rubric / team / three-page PDF | Source updated; PDF regenerated and verified | docs/RUBRIC.md; docs/WRITEUP.md |
-| Exact official Task C | Pass in automated real-provider native host; rejected writes; clean checkout | docs/live-C-official-recheck.json |
-| Live Task A | Pass: scoped reviewed edit, independent behavior checks and all 35 Flask helper tests | docs/live-A-exact-edits.json; docs/live-A-flask-tests.json |
-| Live Task B | Pass: evaluated live with real Groq provider (openai/gpt-oss-120b); reviewed proposals across src/flask/cli.py, tests/test_cli.py, docs/cli.rst; 59 CLI tests passed, flask --help and config masking verified | docs/live-B-verified.json |
-| Groq fallback | Configured privately; real generation and Task A fallback verified | scripts/configure-groq.ps1; docs/live-A-exact-edits.json |
-| Demo video | Excluded by user; no recording or credit claimed | scripts/demo.md |
+| Typecheck / unit tests / build | Pass: 159 tests passing | `npm test`, `npm run typecheck`, `npm run build` |
+| Multi-platform CI | Pass on Windows, macOS, Linux | GitHub Actions (`test` and `verify` workflows) |
+| Windows package & native host | Pass: packaged VSIX installs and passes native editor & undo checks | `output/forge-agent-win32-x64.vsix`; docs/vsix-final-native-results.json |
+| Task A (Inline edit) | Pass: scoped reviewed edits, hunk accept/reject, independent docstring & debug flag verification | docs/live-A-exact-edits.json; scripts/verify-flask-demo.py |
+| Task B (Agent mode) | Pass: autonomous multi-file proposals across cli.py, test_cli.py, cli.rst; CLI tests pass; config masking verified | docs/live-B-verified.json; scripts/verify-flask-demo.py |
+| Task C (Resilience) | Pass: fail-fast on auth/permanent errors, bounded retry backoff, clean fallback in fresh session | docs/live-C-official-recheck.json; test/resilience.test.ts |
+| Documentation | Updated: README.md, WRITEUP.md, RUBRIC.md, AUDIT.md, and demo guide aligned | docs/WRITEUP.md, README.md, scripts/demo.md |
 
-Provider credentials are stored only in local TrueForge settings outside the repository. Keep the loopback Groq adapter running beside TrueForge; see README. Provider quota and malformed-generation failures remain possible. Automated native-host task checks use scoped programmatic review and do not establish a manual UI demonstration. See WRITEUP section 8 for command permissions, multiwindow and platform limitations.
+## Checklist of remaining submission steps
+
+- [ ] Record 4-minute demo video covering Tasks A, B, and C in order according to scripts/demo.md rules
+- [ ] Make demo video publicly accessible and update link in README.md (`[TODO: video link]`)
+- [ ] Export final submission write-up PDF (`docs/WRITEUP.pdf`)
+- [ ] Confirm GitHub repository is public (`https://github.com/s2kumar2007/VS-CODE-EXTENSION.git`)
+- [ ] Run final secret and credential audit (confirm zero API keys, bearer tokens, or private emails committed)
+- [ ] Submit official competition form with repository, video, and write-up links
