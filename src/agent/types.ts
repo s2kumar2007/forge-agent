@@ -26,4 +26,5 @@ export interface AgentUi {
   eventLine?(text: string): void;
   session?(id: string): void;
   metrics?(metrics: RunMetrics): void;
+  diffPreview?(preview: { path: string; rationale?: string }): void;
 }

@@ -36,6 +36,23 @@ window.addEventListener('message', ({ data: m }) => {
       break;
     }
     case 'tool': add('tool', 'tool call: ' + m.name); break;
+    case 'diffPreview': {
+      const card = document.createElement('div');
+      card.className = 'msg preview-card';
+      const title = document.createElement('div');
+      title.className = 'preview-title';
+      title.textContent = '📝 Proposed change: ' + m.path;
+      card.appendChild(title);
+      if (m.rationale) {
+        const desc = document.createElement('div');
+        desc.className = 'preview-desc';
+        desc.textContent = m.rationale;
+        card.appendChild(desc);
+      }
+      log.appendChild(card);
+      log.scrollTop = log.scrollHeight;
+      break;
+    }
     case 'notice': add('notice', m.text); break;
     case 'session': add('notice', 'Session: ' + m.id); break;
     case 'done':

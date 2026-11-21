@@ -29,6 +29,22 @@ let readOnlyCount = 0;
 const seenCalls = new Set<string>();
 const readHashes = new Map<string, string>();
 
+let mutationLock: Promise<void> = Promise.resolve();
+
+async function withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
+  const previousLock = mutationLock;
+  let release: () => void = () => {};
+  mutationLock = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    await previousLock;
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 function hashContent(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
@@ -199,7 +215,7 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
       newText: z.string().optional(),
       rationale: z.string(),
     },
-  }, (args) => guarded(async () => {
+  }, (args) => guarded(async () => withMutationLock(async () => {
     const dup = checkDuplicateCall('propose_write', args);
     if (dup) return dup;
     if (isSecretPath(args.path)) return fail('blocked: secret-like file');
@@ -215,17 +231,17 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     const candidate = materializeWrite(current, args);
     const res = await api.applyProposal(abs, candidate);
     return ok(res);
-  }));
+  })));
 
   mcp.registerTool('run_command', {
     description: 'Run a shell command in the workspace root (e.g. tests). Requires user approval. Output is truncated to 8KB; 120s timeout.',
     inputSchema: { command: z.string().min(1) },
-  }, ({ command }) => guarded(async () => {
+  }, ({ command }) => guarded(async () => withMutationLock(async () => {
     const dup = checkDuplicateCall('run_command', { command });
     if (dup) return dup;
     const r = await api.runCommand(command);
     return ok(`exit code: ${r.exitCode ?? 'none'}${r.timedOut ? ' (timed out)' : ''}\n${r.output}`);
-  }));
+  })));
 
   if (options?.includeAdvancedTools) {
     mcp.registerTool('propose_changes', {
@@ -252,7 +268,7 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
         })).min(1).max(20),
         rationale: z.string(),
       },
-    }, (args) => guarded(async () => {
+    }, (args) => guarded(async () => withMutationLock(async () => {
       const dup = checkDuplicateCall('propose_changes', args);
       if (dup) return dup;
       const results: string[] = [];
@@ -272,7 +288,7 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
         results.push(`${toRel(root, abs)}: ${res}`);
       }
       return ok(`Applied changes to ${results.length} file(s):\n${results.join('\n')}`);
-    }));
+    })));
 
   mcp.registerTool('search_symbols', {
     description: 'Search workspace symbols (functions, classes, methods, variables). Results include definition line and 6-line code snippet.',
@@ -367,12 +383,12 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
       test_path: z.string().optional(),
       filter: z.string().optional(),
     },
-  }, ({ framework, test_path, filter }) => guarded(async () => {
+  }, ({ framework, test_path, filter }) => guarded(async () => withMutationLock(async () => {
     const cmd = await detectTestCommand(root, framework, test_path, filter);
     const dup = checkDuplicateCall('run_tests', { cmd });
     if (dup) return dup;
     const r = await api.runCommand(cmd);
     return ok(`exit code: ${r.exitCode ?? 'none'}${r.timedOut ? ' (timed out)' : ''}\n${r.output}`);
-  }));
+  })));
   }
 }

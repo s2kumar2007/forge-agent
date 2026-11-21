@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { estimateTokens, packContext } from '../src/context/budget';
-import { assembleContext, windows, type ContextDeps } from '../src/context/assemble';
+import { assembleContext, computeAdaptiveBudget, windows, type ContextDeps } from '../src/context/assemble';
 import { extractKeywords, parseMentions } from '../src/context/keywords';
 import { topLevelSymbols } from '../src/context/symbols';
 import { runRg } from '../src/workspace/ripgrep';
@@ -154,5 +154,27 @@ describe('per-request readText and symbol caching', () => {
     const r2 = await assembleContext('check @file:src/app.py', deps, 1500);
     expect(r2.text).toContain('def bar()');
     expect(readCounts.get('src/app.py')).toBe(2);
+  });
+
+  it('adapts budget dynamically based on request complexity', () => {
+    expect(computeAdaptiveBudget('quick question', 3000)).toBe(3000);
+    expect(computeAdaptiveBudget('Add a new built-in CLI command flask config that prints configuration with tests and docs', 3000)).toBe(4000);
+  });
+
+  it('prioritizes matching test files when candidate implementation file is matched', async () => {
+    const files: Record<string, string> = {
+      'src/flask/cli.py': 'def routes_command(): pass\n',
+      'tests/test_cli.py': 'def test_routes(): pass\n',
+    };
+    const deps: ContextDeps = {
+      listFiles: async () => Object.keys(files),
+      searchKeyword: async (k) => k === 'routes' ? [{ path: 'src/flask/cli.py', line: 1, text: 'def routes_command():' }] : [],
+      searchImporters: async () => [],
+      readText: async (p) => files[p],
+      findSymbol: async () => undefined,
+    };
+
+    const res = await assembleContext('inspect routes command', deps, 2000);
+    expect(res.items.some((it) => it.label.startsWith('tests/test_cli.py'))).toBe(true);
   });
 });

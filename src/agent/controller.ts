@@ -321,7 +321,24 @@ export class AgentController {
 
         for (const a of res.approvals) {
           const info = describeToolCall(res.events, a);
-          if (info?.name === 'propose_write' || info?.name === 'propose_changes') hadProposeWrite = true;
+          if (info?.name === 'propose_write' || info?.name === 'propose_changes') {
+            hadProposeWrite = true;
+            if (info.name === 'propose_write' && typeof info.args.path === 'string') {
+              ui.diffPreview?.({
+                path: info.args.path,
+                rationale: typeof info.args.rationale === 'string' ? info.args.rationale : undefined,
+              });
+            } else if (info.name === 'propose_changes' && Array.isArray(info.args.changes)) {
+              for (const ch of info.args.changes) {
+                if (ch && typeof ch.path === 'string') {
+                  ui.diffPreview?.({
+                    path: ch.path,
+                    rationale: typeof ch.rationale === 'string' ? ch.rationale : (typeof info.args.rationale === 'string' ? info.args.rationale : undefined),
+                  });
+                }
+              }
+            }
+          }
           const decision = info
             ? await this.d.approvals.decide(info, this.abort.signal)
             : { status: 'deny' as const, reason: 'Could not read the tool call arguments.' };

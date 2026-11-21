@@ -6,7 +6,7 @@
       "name": "forge-nvidia/nemotron-3-5-lightning-30b-a3b",
       "params": {
         "temperature": 0.2,
-        "parallel_tool_calls": false,
+        "parallel_tool_calls": true,
         "max_tokens": 8000
       }
     },

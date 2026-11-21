@@ -141,6 +141,26 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
       if (m) { bump(f, 4, `defines "${m.name}"`); hitLines.set(f, [...(hitLines.get(f) ?? []), m.line]); }
     }
   }
+
+  // Matching test files for the top candidate files
+  for (const f of top) {
+    const baseName = f.replace(/\.[^.]+$/, '').split('/').pop()!;
+    if (baseName.length >= 3 && baseName !== '__init__') {
+      const testPattern = new RegExp(`(?:^|/)(?:test_${baseName}|${baseName}_test|test_${baseName}\\.[^.]+)$`, 'i');
+      for (const file of files) {
+        if (testPattern.test(file) && file !== f) {
+          bump(file, 6, `matching test for ${baseName}`, true);
+          const testText = await cachedReadText(file);
+          if (testText) {
+            const syms = cachedTopLevelSymbols(testText, file);
+            for (const s of syms) {
+              hitLines.set(file, [...(hitLines.get(file) ?? []), s.line]);
+            }
+          }
+        }
+      }
+    }
+  }
   // Files importing the best matches: the code that depends on what we are about to change.
   const candidateMods: { file: string; mod: string }[] = [];
   for (const f of [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([x]) => x)) {
@@ -203,6 +223,16 @@ export function renderTree(files: string[], maxChars: number): string {
     out += line;
   }
   return out;
+}
+
+export function computeAdaptiveBudget(request: string, baseBudget = 3000): number {
+  const isComplex = /(?:multi-file|tests?|docs?|cli|command|refactor|feature|implement|add|create)/i.test(request) ||
+    (request.match(/@file:/g) ?? []).length > 1 ||
+    request.length > 120;
+  if (isComplex) {
+    return Math.min(4000, baseBudget + 1000);
+  }
+  return Math.min(3000, baseBudget);
 }
 
 export { estimateTokens };

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import type { AgentController } from '../agent/controller';
 import type { AgentUi } from '../agent/types';
-import { assembleContext } from '../context/assemble';
+import { assembleContext, computeAdaptiveBudget } from '../context/assemble';
 import type { WorkspaceContextDeps } from '../context/vscodeDeps';
 import { getConfig } from '../config';
 import type { RunMetrics } from '../metrics';
@@ -17,7 +17,8 @@ type ToWebview =
   | { type: 'busy'; value: boolean }
   | { type: 'context'; items: { label: string; reason: string; tokens: number }[]; tokens: number; budget: number }
   | { type: 'suggestions'; items: { insert: string; label: string }[] }
-  | { type: 'metrics'; metrics: RunMetrics };
+  | { type: 'metrics'; metrics: RunMetrics }
+  | { type: 'diffPreview'; path: string; rationale?: string };
 
 /** Webview chat. A thin UI over AgentController; all network work is async so the host never blocks. */
 export class ChatPanel {
@@ -62,12 +63,13 @@ export class ChatPanel {
       eventLine: (t) => this.post({ type: 'notice', text: t }),
       session: (id) => this.post({ type: 'session', id }),
       metrics: (metrics) => this.post({ type: 'metrics', metrics }),
+      diffPreview: (preview) => this.post({ type: 'diffPreview', path: preview.path, rationale: preview.rationale }),
     };
     try {
       const buildMessage = async (budget: number): Promise<string> => {
         try {
           const promptTokens = Math.ceil(text.length / 4);
-          const effectiveBudget = Math.max(500, Math.min(budget, 3500 - promptTokens));
+          const effectiveBudget = Math.max(500, Math.min(budget, 4000 - promptTokens));
           const ctx = await assembleContext(text, this.deps, effectiveBudget, this.sendAbort.signal);
           this.post({
             type: 'context',
@@ -82,7 +84,8 @@ export class ChatPanel {
         }
       };
 
-      const primaryMessage = await buildMessage(getConfig().contextBudget);
+      const baseBudget = getConfig().contextBudget;
+      const primaryMessage = await buildMessage(computeAdaptiveBudget(text, baseBudget));
       if (this.sendAbort.signal.aborted) { ui.finished({ status: 'cancelled', message: 'Cancelled - no changes applied' }); return; }
       await this.controller.run(primaryMessage, ui, undefined, async (agent) => {
         if (agent === getConfig().fallbackAgentName) {

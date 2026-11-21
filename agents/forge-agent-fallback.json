@@ -6,7 +6,7 @@
       "name": "google-gemini/gemini-3-8-flash",
       "params": {
         "temperature": 0.2,
-        "parallel_tool_calls": false,
+        "parallel_tool_calls": true,
         "max_tokens": 8000
       }
     },
