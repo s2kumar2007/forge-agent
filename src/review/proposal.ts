@@ -47,25 +47,82 @@ function severalMatchError(count: number): Error {
 
 /** Builds a candidate only; the normal review permit still controls every write. */
 export function materializeWrite(existing: string | undefined, args: Record<string, unknown>): string {
-  const full = args.new_content !== undefined, patches = args.edits !== undefined;
-  if (full === patches) throw new Error('Provide exactly one of new_content or edits.');
-  if (full) {
-    if (typeof args.new_content !== 'string') throw new Error('new_content must be a string.');
-    return args.new_content;
+  const full = args.new_content !== undefined ? args.new_content : args.newContent;
+  const isFull = full !== undefined;
+  const isLineRange = args.startLine !== undefined && args.endLine !== undefined;
+  const isSearchReplace = args.search !== undefined || (args.old_text !== undefined && args.edits === undefined);
+  const isEdits = args.edits !== undefined;
+
+  const modeCount = (isFull ? 1 : 0) + (isLineRange ? 1 : 0) + (isSearchReplace ? 1 : 0) + (isEdits ? 1 : 0);
+  if (modeCount !== 1) {
+    throw new Error('Provide exactly one edit mode: new_content, edits, search/replace, or line range.');
   }
-  if (existing === undefined) throw new Error('Exact edits require an existing file; use new_content to create one.');
-  if (!Array.isArray(args.edits) || args.edits.length === 0 || args.edits.length > 20)
-    throw new Error('Provide between 1 and 20 exact edits.');
+
+  if (isFull) {
+    if (typeof full !== 'string') throw new Error('new_content must be a string.');
+    return full;
+  }
+
+  if (existing === undefined) {
+    throw new Error('Exact edits require an existing file; use new_content to create one.');
+  }
+
+  if (isLineRange) {
+    const start = Number(args.startLine);
+    const end = Number(args.endLine);
+    const rep = String(args.newText ?? args.new_text ?? '');
+    const lines = existing.split(/\r?\n/);
+    if (isNaN(start) || isNaN(end) || start < 1 || start > lines.length + 1 || end < start - 1 || end > lines.length) {
+      throw new Error(`Invalid line range: lines ${start}-${end} out of bounds (file has ${lines.length} lines).`);
+    }
+    const eol = existing.includes('\r\n') ? '\r\n' : '\n';
+    const repLines = rep.length > 0 ? rep.split(/\r?\n/) : [];
+    lines.splice(start - 1, end - start + 1, ...repLines);
+    return lines.join(eol);
+  }
+
+  let editsList: any[];
+  if (isSearchReplace) {
+    const search = args.search !== undefined ? args.search : args.old_text;
+    const replace = args.replace !== undefined ? args.replace : (args.new_text ?? '');
+    editsList = [{ old_text: search, new_text: replace }];
+  } else {
+    if (!Array.isArray(args.edits) || args.edits.length === 0 || args.edits.length > 20) {
+      throw new Error('Provide between 1 and 20 exact edits.');
+    }
+    editsList = args.edits;
+  }
 
   let candidate = existing;
   const eol = existing.includes('\r\n') ? '\r\n' : '\n';
 
-  for (const edit of args.edits) {
-    if (typeof edit !== 'object' || edit === null || typeof edit.old_text !== 'string' || !edit.old_text || typeof edit.new_text !== 'string')
-      throw new Error('Each edit requires nonempty old_text and string new_text.');
+  for (const edit of editsList) {
+    if (typeof edit !== 'object' || edit === null) {
+      throw new Error('Each edit must be an object.');
+    }
+    if (edit.startLine !== undefined && edit.endLine !== undefined) {
+      const start = Number(edit.startLine);
+      const end = Number(edit.endLine);
+      const rep = String(edit.newText ?? edit.new_text ?? '');
+      const cLines = candidate.split(/\r?\n/);
+      if (isNaN(start) || isNaN(end) || start < 1 || start > cLines.length + 1 || end < start - 1 || end > cLines.length) {
+        throw new Error(`Invalid line range: lines ${start}-${end} out of bounds.`);
+      }
+      const repLines = rep.length > 0 ? rep.split(/\r?\n/) : [];
+      cLines.splice(start - 1, end - start + 1, ...repLines);
+      candidate = cLines.join(eol);
+      continue;
+    }
 
-    const needle = normalizeEol(existing, edit.old_text);
-    const replacement = normalizeEol(existing, edit.new_text);
+    const oldText = edit.search !== undefined ? edit.search : edit.old_text;
+    const newText = edit.replace !== undefined ? edit.replace : edit.new_text;
+
+    if (typeof oldText !== 'string' || !oldText || typeof newText !== 'string') {
+      throw new Error('Each edit requires nonempty old_text and string new_text.');
+    }
+
+    const needle = normalizeEol(existing, oldText);
+    const replacement = normalizeEol(existing, newText);
 
     // 1. Direct exact substring match
     let exactCount = 0;

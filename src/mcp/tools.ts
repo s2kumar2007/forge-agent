@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { EditorApi } from '../workspace/types';
 import { PathError, isSecretPath, resolveInsideReal, toRel } from '../workspace/paths';
@@ -24,6 +25,11 @@ export interface ToolOptions {
 let defaultExplorationBudget = 12;
 let readOnlyCount = 0;
 const seenCalls = new Set<string>();
+const readHashes = new Map<string, string>();
+
+function hashContent(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
 
 function canonicalize(val: unknown): unknown {
   if (val === null || typeof val !== 'object') return val;
@@ -51,6 +57,7 @@ export function setExplorationBudget(n: number): void {
 export function resetToolRunState(): void {
   readOnlyCount = 0;
   seenCalls.clear();
+  readHashes.clear();
 }
 
 export const resetToolDeduplication = resetToolRunState;
@@ -83,6 +90,7 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     if (isSecretPath(rel)) return fail('blocked: secret-like file');
     const text = await api.readText(abs);
     if (text === undefined) return fail(`File not found: ${path}`);
+    readHashes.set(abs, hashContent(text));
     if (outline) {
       const symbols = extractOutline(text, rel).slice(0, 200);
       if (symbols.length === 0) return ok(`${rel} outline: no definitions found.`);
@@ -168,16 +176,43 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
   }));
 
   mcp.registerTool('propose_write', {
-    description: 'Propose a reviewed file change. For existing files prefer edits: [{old_text,new_text}]; each old_text must match exactly once. For new files use complete new_content. Provide exactly one form, plus path and rationale. Nothing is written before hunk review. Call once per file.',
-    inputSchema: { path: z.string(), new_content: z.string().optional(), edits: z.array(z.object({old_text:z.string().min(1),new_text:z.string()})).min(1).max(20).optional(), rationale: z.string() },
+    description: 'Propose a reviewed file change. For existing files prefer edits: [{old_text,new_text}], search/replace ({search, replace}), or line range ({startLine, endLine, newText}). For new files use new_content. Provide exactly one form, plus path and rationale. Nothing is written before hunk review. Call once per file.',
+    inputSchema: {
+      path: z.string(),
+      new_content: z.string().optional(),
+      newContent: z.string().optional(),
+      edits: z.array(z.object({
+        old_text: z.string().optional(),
+        new_text: z.string().optional(),
+        search: z.string().optional(),
+        replace: z.string().optional(),
+        startLine: z.number().int().optional(),
+        endLine: z.number().int().optional(),
+        newText: z.string().optional(),
+      })).min(1).max(20).optional(),
+      search: z.string().optional(),
+      replace: z.string().optional(),
+      startLine: z.number().int().optional(),
+      endLine: z.number().int().optional(),
+      newText: z.string().optional(),
+      rationale: z.string(),
+    },
   }, (args) => guarded(async () => {
     const dup = checkDuplicateCall('propose_write', args);
     if (dup) return dup;
     if (isSecretPath(args.path)) return fail('blocked: secret-like file');
     const abs = await resolveInsideReal(root, args.path);
     if (isSecretPath(toRel(root, abs))) return fail('blocked: secret-like file');
-    const candidate = materializeWrite(await api.readText(abs), args);
-    return ok(await api.applyProposal(abs, candidate));
+    const current = await api.readText(abs);
+    if (current !== undefined && readHashes.has(abs)) {
+      if (hashContent(current) !== readHashes.get(abs)) {
+        return fail(`Stale file: "${args.path}" was modified after it was read. Re-read the file before proposing changes.`);
+      }
+    }
+    const candidate = materializeWrite(current, args);
+    const res = await api.applyProposal(abs, candidate);
+    readHashes.set(abs, hashContent(candidate));
+    return ok(res);
   }));
 
   mcp.registerTool('run_command', {

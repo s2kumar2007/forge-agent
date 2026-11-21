@@ -85,3 +85,21 @@ it('reports several matches with occurrences count (ITEM 4)', () => {
   expect(thrownError!.message).toContain('Exact edit text matched several times');
   expect(thrownError!.message).toContain('3 occurrences');
 });
+
+it('supports top-level search and replace format', () => {
+  const oldText = 'const x = 10;\nconst y = 20;\n';
+  const res = materializeWrite(oldText, { search: 'const x = 10;', replace: 'const x = 99;' });
+  expect(res).toBe('const x = 99;\nconst y = 20;\n');
+});
+
+it('supports line range replacement with 1-based indexing', () => {
+  const oldText = 'line 1\nline 2\nline 3\nline 4\n';
+  const res = materializeWrite(oldText, { startLine: 2, endLine: 3, newText: 'line 2-3 updated\nline extra' });
+  expect(res).toBe('line 1\nline 2-3 updated\nline extra\nline 4\n');
+});
+
+it('supports line range insertion and bounds validation', () => {
+  const oldText = 'alpha\nbeta\ngamma';
+  expect(() => materializeWrite(oldText, { startLine: 0, endLine: 2, newText: 'x' })).toThrow(/out of bounds/);
+  expect(() => materializeWrite(oldText, { startLine: 2, endLine: 5, newText: 'x' })).toThrow(/out of bounds/);
+});
