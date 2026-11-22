@@ -1,3 +1,5 @@
+Internal working notes, not part of the submission.
+
 # Official Demo Video Recording Guide — Forge Agent
 
 > **For the Video Creator / Team Member**  

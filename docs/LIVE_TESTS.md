@@ -1,3 +1,5 @@
+Internal working notes, not part of the submission.
+
 # Opt-in live checks
 
 These checks use real TrueForge/provider requests and native VS Code WorkspaceEdit operations. They are automated integration evidence, not a manual demo of the chat/input/review UI. Only Task A's helpers.py or Task B's cli.py, test_cli.py and cli.rst proposals are programmatically accepted; all agent shell commands are declined. Independent Python checks and pytest run afterward. Native visual review and undo mechanics are covered separately.

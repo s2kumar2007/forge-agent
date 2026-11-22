@@ -1,3 +1,5 @@
+Internal working notes, not part of the submission.
+
 # Forge Character Guide: 3D Assistant & 2D SVG Avatar
 
 This document details the design, architecture, procedural rendering pipeline, state machine, accessibility, safety, theme system, and performance characteristics of the **Forge Character** docked beside the Ask Forge strip in the Forge Agent panel.
@@ -37,34 +39,23 @@ The Forge Character provides responsive, non-blocking visual feedback for agent 
 
 The upgraded procedural model features rounded, friendly proportions, articulated shoulder and elbow pivots, blinking eyes, rim lighting, dynamic blob shadow, orbiting thought particles, and a celebratory spark burst.
 
-```mermaid
-flowchart TD
-  Scene["Three.js Scene"] --> Root["rootGroup (Y offset & breathe)"]
-  Root --> BlobShadow["blobShadow (disc + opacity 0.25-0.35)"]
-  Root --> Anvil["anvilGroup (LatheGeometry + horn + table)"]
-  Root --> SparkBurst["sparkBurst (Points 24 particles)"]
-  Root --> Hips["hipsGroup"]
-  Hips --> Torso["torsoMesh (RoundedBoxGeometry)"]
-  Torso --> Core["coreMesh (CylinderGeometry emissive)"]
-  Torso --> Neck["neckMesh (CylinderGeometry)"]
-  Neck --> Head["headGroup"]
-  Head --> HeadMesh["headMesh (RoundedBoxGeometry)"]
-  Head --> Visor["visorMesh (RoundedBoxGeometry)"]
-  Head --> LeftEye["leftEye (CircleGeometry)"]
-  Head --> RightEye["rightEye (CircleGeometry)"]
-  Head --> Ears["earCylinders (Left & Right)"]
-  Head --> ThoughtOrbs["thoughtOrbs (Points 8 orbiting orbs)"]
-  Torso --> LeftShoulder["leftShoulder (Sphere joint)"]
-  LeftShoulder --> LeftUpperArm["leftUpperArm (CapsuleGeometry)"]
-  LeftUpperArm --> LeftElbow["leftElbow (Sphere joint)"]
-  LeftElbow --> LeftForearm["leftForearm (CapsuleGeometry)"]
-  LeftForearm --> LeftHand["leftHand (Sphere)"]
-  Torso --> RightShoulder["rightShoulder (Sphere joint)"]
-  RightShoulder --> RightUpperArm["rightUpperArm (CapsuleGeometry)"]
-  RightUpperArm --> RightElbow["rightElbow (Sphere joint)"]
-  RightElbow --> RightForearm["rightForearm (CapsuleGeometry)"]
-  RightForearm --> RightHand["rightHand (Sphere)"]
-  RightHand --> Hammer["hammerGroup (Handle + Tapered Head)"]
+```
+Scene (Three.js Scene)
+  └── Root (rootGroup: Y offset & breathe)
+        ├── BlobShadow (disc + opacity 0.25-0.35)
+        ├── Anvil (anvilGroup: LatheGeometry + horn + table)
+        ├── SparkBurst (Points 24 particles)
+        └── Hips (hipsGroup)
+              └── Torso (torsoMesh: RoundedBoxGeometry)
+                    ├── Core (coreMesh: CylinderGeometry emissive)
+                    ├── Neck (neckMesh: CylinderGeometry)
+                    │     └── Head (headGroup)
+                    │           ├── HeadMesh & Visor
+                    │           ├── LeftEye & RightEye (CircleGeometry)
+                    │           ├── Ears (Left & Right)
+                    │           └── ThoughtOrbs (Points 8 orbiting orbs)
+                    ├── LeftShoulder -> LeftUpperArm -> LeftElbow -> LeftForearm -> LeftHand
+                    └── RightShoulder -> RightUpperArm -> RightElbow -> RightForearm -> RightHand -> Hammer
 ```
 
 ---

@@ -1,3 +1,5 @@
+Internal working notes, not part of the submission.
+
 # Failure Recovery & Provider Resilience Table
 
 This document details how Forge Agent handles upstream model, provider, network, and token limit failures with automatic, safe fallbacks (specifically Task C).
