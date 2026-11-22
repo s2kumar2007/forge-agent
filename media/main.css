@@ -341,6 +341,16 @@ html, body {
   font-family: var(--vscode-editor-font-family, Consolas, "Courier New", monospace);
 }
 
+.chat-container {
+  position: relative;
+  flex: 1 1 0%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--vscode-editor-background);
+}
+
 #log {
   flex: 1 1 0%;
   min-height: 0;
@@ -815,54 +825,78 @@ code, pre {
   font-family: var(--vscode-editor-font-family, Consolas, "Courier New", monospace);
 }
 
-/* --- Header Mascot & Mode Dropdown --- */
-.header-mascot-dock {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  min-height: 28px;
+/* --- Floating Mascot & Mode Dropdown --- */
+.floating-mascot-dock {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 30;
+  pointer-events: none;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  position: relative;
-  flex-shrink: 0;
-  border-radius: 4px;
-  overflow: hidden;
   user-select: none;
 }
 
-.header-mascot-dock.collapsed {
+.floating-mascot-dock.collapsed {
   display: none !important;
 }
 
-.header-mascot-dock .character-viewport {
-  width: 28px;
-  height: 28px;
+.floating-mascot-dock .character-viewport {
+  width: 140px;
+  height: 140px;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  position: relative;
+  pointer-events: auto;
+  cursor: grab;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.4));
+  transition: transform 0.15s ease;
+}
+
+.floating-mascot-dock .character-viewport:active {
+  cursor: grabbing;
 }
 
 #forge-character-canvas {
-  width: 28px;
-  height: 28px;
+  width: 140px;
+  height: 140px;
   background: transparent;
   display: none;
 }
 
 .character-2d {
-  width: 28px;
-  height: 28px;
+  width: 100px;
+  height: 100px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .character-2d svg {
-  width: 28px;
-  height: 28px;
+  width: 100%;
+  height: 100%;
   display: block;
+}
+
+.character-speech {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  max-width: 180px;
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  line-height: 1.3;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .mascot-menu-container {
@@ -957,9 +991,7 @@ code, pre {
   color: var(--vscode-button-foreground, #ffffff);
 }
 
-.character-speech {
-  display: none !important;
-}
+
 
 .sr-only {
   position: absolute;

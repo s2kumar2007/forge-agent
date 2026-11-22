@@ -116,27 +116,21 @@ export class ChatPanel {
 <link rel="stylesheet" href="${css}"></head><body>
 <header id="header">
   <div class="header-left">
-    <div id="forge-character-dock" class="character-dock header-mascot-dock" aria-label="Forge Mascot">
-      <div id="character-speech-bubble" class="character-speech" style="display:none;" aria-hidden="true"></div>
-      <div class="character-viewport">
-        <canvas id="forge-character-canvas" width="28" height="28" aria-label="3D Forge character" role="img" style="display:none;"></canvas>
-        <div id="forge-character-svg" class="character-2d" aria-label="2D Forge avatar" role="img"></div>
-      </div>
-    </div>
+    <img class="header-logo" src="${logo}" alt="Forge Agent logo" width="22" height="22">
     <div class="header-titles">
       <div class="header-title">Forge Agent</div>
     </div>
   </div>
   <div class="header-right">
     <div class="mascot-menu-container">
-      <button id="mascot-menu-btn" class="header-icon-btn" type="button" aria-label="Mascot settings" title="Mascot mode (2D / 3D / Off)" aria-haspopup="true" aria-expanded="false">
-        <span aria-hidden="true">&#9881;</span>
+      <button id="mascot-menu-btn" class="header-icon-btn" type="button" aria-label="Mascot settings" title="Mascot mode (3D / 2D / Off)" aria-haspopup="true" aria-expanded="false">
+        <span aria-hidden="true">&#129302;</span>
       </button>
       <div id="mascot-menu-dropdown" class="mascot-dropdown" role="menu" style="display:none;">
         <div class="mascot-dropdown-title">Mascot Display</div>
         <div class="character-mode-toggle" role="radiogroup" aria-label="Character display mode">
-          <button type="button" class="mode-btn" data-mode="3D" role="radio" aria-checked="false" tabindex="0">3D</button>
-          <button type="button" class="mode-btn active" data-mode="2D" role="radio" aria-checked="true" tabindex="0">2D</button>
+          <button type="button" class="mode-btn active" data-mode="3D" role="radio" aria-checked="true" tabindex="0">3D</button>
+          <button type="button" class="mode-btn" data-mode="2D" role="radio" aria-checked="false" tabindex="0">2D</button>
           <button type="button" class="mode-btn" data-mode="Off" role="radio" aria-checked="false" tabindex="0">Off</button>
         </div>
       </div>
@@ -177,7 +171,16 @@ export class ChatPanel {
   </div>
   <div id="token-bar-label">0 / 2000 est. tokens</div>
 </div>
-<div id="log" aria-live="polite"></div>
+<div id="chat-container" class="chat-container">
+  <div id="log" aria-live="polite"></div>
+  <aside id="forge-character-dock" class="character-dock floating-mascot-dock" aria-label="Forge 3D Character">
+    <div id="character-speech-bubble" class="character-speech" style="display:none;" aria-hidden="true"></div>
+    <div class="character-viewport">
+      <canvas id="forge-character-canvas" width="140" height="140" aria-label="3D Forge character" role="img" style="display:block;"></canvas>
+      <div id="forge-character-svg" class="character-2d" style="display:none;" aria-label="2D Forge avatar" role="img"></div>
+    </div>
+  </aside>
+</div>
 <div id="ac"></div>
 <div id="ask-forge-container">
   <div id="chips">

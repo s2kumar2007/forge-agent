@@ -57,14 +57,12 @@ export class CharacterApp {
     this.themeButtons = document.querySelectorAll('.theme-switch .theme-btn');
     this.themeHcNotice = document.getElementById('theme-high-contrast-notice');
 
-    // Determine initial character mode: sessionStorage > config setting (defaults to '2D')
-    let initialMode: CharacterMode = '2D';
+    // Determine initial character mode: sessionStorage > '3D'
+    let initialMode: CharacterMode = '3D';
     try {
       const saved = sessionStorage.getItem('forge.characterMode');
-      if (saved === '3D' || saved === '2D' || saved === 'Off') {
+      if (saved === '3D' || saved === 'Off') {
         initialMode = saved;
-      } else if (window.__FORGE_INITIAL_CONFIG__?.guideCharacter3d) {
-        initialMode = '3D';
       }
     } catch {}
 
@@ -127,6 +125,67 @@ export class CharacterApp {
           }
         });
       });
+    }
+
+    // Draggable floating mascot
+    if (this.dock && typeof this.dock.querySelector === 'function') {
+      const viewport = this.dock.querySelector('.character-viewport') as HTMLElement | null;
+      if (viewport && typeof viewport.addEventListener === 'function') {
+        let isDragging = false;
+        let startX = 0;
+        let startY = 0;
+        let initialLeft = 0;
+        let initialTop = 0;
+        let moved = false;
+
+        viewport.addEventListener('pointerdown', ((e: PointerEvent) => {
+          if (e.button !== 0) return;
+          isDragging = true;
+          moved = false;
+          startX = e.clientX;
+          startY = e.clientY;
+          if (this.dock?.parentElement) {
+            const rect = this.dock.getBoundingClientRect();
+            const parentRect = this.dock.parentElement.getBoundingClientRect();
+            initialLeft = rect.left - parentRect.left;
+            initialTop = rect.top - parentRect.top;
+          }
+          try {
+            viewport.setPointerCapture?.(e.pointerId);
+          } catch {}
+        }) as EventListener);
+
+        window.addEventListener?.('pointermove', ((e: PointerEvent) => {
+          if (!isDragging || !this.dock) return;
+          const dx = e.clientX - startX;
+          const dy = e.clientY - startY;
+          if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+            moved = true;
+          }
+          if (this.dock.parentElement) {
+            const parentRect = this.dock.parentElement.getBoundingClientRect();
+            const dockW = this.dock.offsetWidth || 140;
+            const dockH = this.dock.offsetHeight || 140;
+            const newLeft = Math.max(0, Math.min(parentRect.width - dockW, initialLeft + dx));
+            const newTop = Math.max(0, Math.min(parentRect.height - dockH, initialTop + dy));
+            this.dock.style.left = `${newLeft}px`;
+            this.dock.style.top = `${newTop}px`;
+            this.dock.style.right = 'auto';
+            this.dock.style.bottom = 'auto';
+          }
+        }) as EventListener);
+
+        window.addEventListener?.('pointerup', ((e: PointerEvent) => {
+          if (!isDragging) return;
+          isDragging = false;
+          try {
+            viewport.releasePointerCapture?.(e.pointerId);
+          } catch {}
+          if (!moved) {
+            this.char3d?.triggerHammerTap();
+          }
+        }) as EventListener);
+      }
     }
 
     // Theme toggle buttons (Auto / White / Black)
@@ -334,8 +393,8 @@ export class CharacterApp {
         try {
           this.char3d = new ForgeCharacter3D({
             canvas: this.canvas,
-            width: this.canvas.width || 28,
-            height: this.canvas.height || 28,
+            width: this.canvas.width || 140,
+            height: this.canvas.height || 140,
             onFallback: (reason) => {
               console.warn(`[Forge Character] Fallback to 2D: ${reason}`);
               this.setMode('2D', true);
@@ -349,6 +408,7 @@ export class CharacterApp {
         }
       }
 
+      this.char3d?.startAnimation();
       this.char3d?.setState(this.state);
     }
   }
