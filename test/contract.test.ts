@@ -37,7 +37,7 @@ describe('TrueForge wire contract', () => {
       id: 'fallback-id',
       name: 'forge-agent-fallback',
       description: 'Existing fallback',
-      manifest: { model: { name: 'forge-fallback/gemini-2.5-flash', params: { temperature: 0.1 } } },
+      manifest: { model: { name: 'forge-fallback/some-model', params: { temperature: 0.1 } } },
     };
     const client = new TrueForge({ baseUrl: 'http://contract.test', fetch: async (url, init) => {
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -48,7 +48,7 @@ describe('TrueForge wire contract', () => {
     const fallback = (await loadAgentFiles('agents')).filter((agent) => agent.name === 'forge-agent-fallback');
     expect((await syncAgents(client, fallback))[0]?.ok).toBe(true);
     const update = requests.find((request) => request.method === 'PUT')!;
-    expect(update.body.manifest.model.name).toBe('forge-fallback/gemini-2.5-flash');
+    expect(update.body.manifest.model.name).toBe('forge-fallback/some-model');
     expect(update.body.manifest.instructions).toBe(fallback[0]!.manifest.instructions);
   });
   it('migrates exact deprecated google-gemini/gemini-2-5-flash to gemini-3-8-flash but preserves other provider models', async () => {
