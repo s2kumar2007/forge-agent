@@ -176,7 +176,7 @@ describe('watchdog, failover budget, and model health', () => {
     await ctl.run('test budget', ui);
 
     expect(ui.result?.status).toBe('error');
-    expect(ui.result?.message).toContain('Failover budget exceeded (3s). No changes were made to your workspace.');
+    expect(ui.result?.message).toContain('Failover budget exceeded (3s). Last error (overloaded): 503 UNAVAILABLE: High demand. No changes were made to your workspace.');
     expect(gitStatus()).toBe('');
   });
 
@@ -272,10 +272,12 @@ describe('watchdog, failover budget, and model health', () => {
     await ctl.run('read and modify', ui);
 
     expect(ui.result?.status).toBe('done');
-    expect(attemptsLogged.length).toBeGreaterThanOrEqual(3);
-    expect(attemptsLogged[0]).toMatch(/\[forge\] Attempt 1: session=s1 agent=forge-primary/);
-    expect(attemptsLogged[1]).toMatch(/\[forge\] Attempt 2: session=s2 agent=forge-primary/);
-    expect(attemptsLogged[2]).toMatch(/\[forge\] Attempt 3: session=s3 agent=forge-fallback model=test-fallback-model/);
+    expect(attemptsLogged.some((l) => /\[forge\] Attempt 1: session=s1 agent=forge-primary/.test(l))).toBe(true);
+    expect(attemptsLogged.some((l) => /\[forge\] Attempt 1 result: agent=forge-primary .* outcome=failed class=overloaded/.test(l))).toBe(true);
+    expect(attemptsLogged.some((l) => /\[forge\] Attempt 2: session=s2 agent=forge-primary/.test(l))).toBe(true);
+    expect(attemptsLogged.some((l) => /\[forge\] Attempt 2 result: agent=forge-primary .* outcome=failed class=overloaded/.test(l))).toBe(true);
+    expect(attemptsLogged.some((l) => /\[forge\] Attempt 3: session=s3 agent=forge-fallback model=test-fallback-model/.test(l))).toBe(true);
+    expect(attemptsLogged.some((l) => /\[forge\] Attempt 3 result: agent=forge-fallback model=test-fallback-model outcome=done/.test(l))).toBe(true);
     expect(ui.notices.some((n) => n.includes('Primary unavailable, continuing on fallback (reusing 1 files already read)'))).toBe(true);
   });
 });

@@ -1,7 +1,7 @@
 import type { TrueForge, TrueForgeApi } from '@truefoundry/trueforge-sdk';
 import { describeToolCall, runTurn, toolName } from '../forge/turnRunner';
 import type { AgentUi, ApprovalHandler } from './types';
-import { CancelledError, ForgeFailure, IterationLimitError, isIterationLimitError, runWithFallback, isOverloadedError, isStallError, type FallbackTarget } from './resilience';
+import { CancelledError, ForgeFailure, IterationLimitError, isIterationLimitError, runWithFallback, isOverloadedError, isStallError, isConfigError, configHint, classifyError, type FallbackTarget } from './resilience';
 import { RunMetricsCollector, type RunMetrics } from '../metrics';
 import { computeHunks } from '../review/hunks';
 import { computeChangeConfidence } from '../review/confidence';
@@ -267,16 +267,31 @@ export class AgentController {
             this.primaryUnhealthyUntil = this.now() + this.circuitBreakerDurationMs;
           }
         },
-        attempt: (agent, target) => this.attempt(
-          agent,
-          target?.model ?? agent,
-          request,
-          ui,
-          rebuildRequest,
-          () => ++clientToolResponses,
-          metricsCollector,
-          primaryAgent,
-        ),
+        attempt: async (agent, target) => {
+          const t0 = this.now();
+          const model = target?.model ?? agent;
+          try {
+            const outcome = await this.attempt(
+              agent,
+              model,
+              request,
+              ui,
+              rebuildRequest,
+              () => ++clientToolResponses,
+              metricsCollector,
+              primaryAgent,
+            );
+            const elapsedMs = Math.round(this.now() - t0);
+            this.d.logAttempt?.(`[forge] Attempt ${this.attemptCount} result: agent=${agent} model=${model} outcome=${outcome} elapsedMs=${elapsedMs}`);
+            return outcome;
+          } catch (err) {
+            const elapsedMs = Math.round(this.now() - t0);
+            const errClass = classifyError(err);
+            const reason = sanitizeReason(err);
+            this.d.logAttempt?.(`[forge] Attempt ${this.attemptCount} result: agent=${agent} model=${model} outcome=failed class=${errClass} elapsedMs=${elapsedMs} reason=${reason}`);
+            throw err;
+          }
+        },
         onRetry: (agent, n, err, target) => {
           this.d.logError?.(err);
           const reason = sanitizeReason(err);
@@ -295,10 +310,15 @@ export class AgentController {
           }
           const reason = sanitizeReason(err);
           const attemptNum = Math.max(1, this.attemptCount);
-          ui.notice(`Attempt ${attemptNum} to "${failedModel}" failed (${reason})`);
+          if (isConfigError(err)) {
+            ui.notice(configHint(failedModel));
+          } else {
+            ui.notice(`Attempt ${attemptNum} to "${failedModel}" failed (${reason})`);
+          }
           ui.notice(`Primary model failed, using fallback: ${nextModel}`);
           const filesCount = this.handoffTracker.getUniqueFilesCount();
-          ui.notice(`Primary unavailable, continuing on fallback (reusing ${filesCount} files already read)`);
+          const reusingStr = filesCount > 0 ? ` (reusing ${filesCount} files already read)` : '';
+          ui.notice(`Primary unavailable, continuing on fallback${reusingStr}`);
         },
       });
       if (chosenPrimary.agent === primaryAgent && !primaryFailed && outcome === 'done') {

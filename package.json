@@ -32,6 +32,10 @@
       {
         "command": "forge.undoLast",
         "title": "Forge: Undo last applied change"
+      },
+      {
+        "command": "forge.testProviders",
+        "title": "Forge: Test providers"
       }
     ],
     "configuration": {

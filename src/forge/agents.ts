@@ -40,7 +40,7 @@ export async function syncAgents(client: TrueForge, agents: AgentFile[]): Promis
         const existing = await findAgent(client, a.name);
         if (existing) {
           let configuredModel = existing.manifest?.model?.name;
-          if (configuredModel && /gemini-2[-.]5-flash/i.test(configuredModel)) {
+          if (configuredModel === 'google-gemini/gemini-2-5-flash') {
             configuredModel = 'google-gemini/gemini-3-8-flash';
           }
           let manifest = configuredModel

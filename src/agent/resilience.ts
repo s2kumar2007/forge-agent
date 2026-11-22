@@ -79,13 +79,53 @@ export function isQuotaError(err: unknown): boolean {
   return /\b429\b|rate[-_ ]?limit|quota|too many requests|resource[ _]exhausted/i.test(message);
 }
 
+/** Detects configuration errors (e.g. HTTP 422 Unprocessable Entity, missing model/provider). */
+export function isConfigError(err: unknown): boolean {
+  if (!err) return false;
+  const status = (err as any)?.status ?? (err as any)?.statusCode ?? (err as any)?.response?.status;
+  if (status === 422) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /unprocessable ?entity|configure the required models|failed to sync|provider not configured|unknown model|model .*not (found|configured)/i.test(message);
+}
+
+export type ErrorClass = 'config' | 'auth' | 'rate-limit' | 'overloaded' | 'stall' | 'network' | 'other';
+
+export function isNetworkError(err: unknown): boolean {
+  if (!err) return false;
+  const message = err instanceof Error ? err.message : String(err);
+  return /(?:fetch failed|econnrefused|econnreset|enotfound|etimedout|connection refused|connection reset|connection timeout|connect econnrefused|failed to fetch|network\s*error|socket hang up)/i.test(message);
+}
+
+export function isAuthError(err: unknown): boolean {
+  if (!err) return false;
+  const status = (err as any)?.status ?? (err as any)?.statusCode ?? (err as any)?.response?.status;
+  if (status === 401 || status === 403) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b(?:401|403)\b|unauthorized|forbidden/i.test(message);
+}
+
+export function classifyError(err: unknown): ErrorClass {
+  if (isConfigError(err)) return 'config';
+  if (isStallError(err)) return 'stall';
+  if (isOverloadedError(err)) return 'overloaded';
+  if (isQuotaError(err)) return 'rate-limit';
+  if (isAuthError(err)) return 'auth';
+  if (isNetworkError(err)) return 'network';
+  return 'other';
+}
+
+export function configHint(model: string): string {
+  return `Model "${model}" is not configured in TrueForge. Add that provider and model in the TrueForge settings (http://localhost:8790) or run scripts/configure-provider.cjs, then try again. Skipping it and trying the next model.`;
+}
+
 /** Permanent errors that should fail fast without retrying. */
 export function isPermanentError(err: unknown): boolean {
   if (!err) return false;
+  if (isConfigError(err)) return true;
   const status = (err as any)?.status ?? (err as any)?.statusCode ?? (err as any)?.response?.status;
-  if (status === 400 || status === 401 || status === 403 || status === 404 || status === 413) return true;
+  if (status === 400 || status === 401 || status === 403 || status === 404 || status === 413 || status === 422) return true;
   const message = err instanceof Error ? err.message : String(err);
-  if (/\b(?:400|401|403|404|413)\b/.test(message)) return true;
+  if (/\b(?:400|401|403|404|413|422)\b/.test(message)) return true;
   if (/unauthorized|forbidden|not found|too large|payload too large|request too large/i.test(message) && !/429/i.test(message)) return true;
   return false;
 }
@@ -127,12 +167,24 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
   }
 
   const now = o.now ?? Date.now;
-  const startTime = now();
   const failoverBudgetMs = o.failoverBudgetMs ?? 45_000;
+  let failoverStart: number | undefined;
+
+  let lastErr: unknown;
+  let primaryErr: unknown;
+  let fallbackErr: unknown;
+
+  const budgetLeft = (): number => {
+    if (failoverStart === undefined) return failoverBudgetMs;
+    return failoverBudgetMs - (now() - failoverStart);
+  };
+
   const checkBudget = () => {
-    if (now() - startTime >= failoverBudgetMs) {
+    if (failoverStart !== undefined && now() - failoverStart >= failoverBudgetMs) {
+      const cls = lastErr ? classifyError(lastErr) : 'other';
+      const reason = lastErr ? briefReason(lastErr) : 'unknown error';
       throw new ForgeFailure(
-        `Failover budget exceeded (${Math.round(failoverBudgetMs / 1000)}s). No changes were made to your workspace.`
+        `Failover budget exceeded (${Math.round(failoverBudgetMs / 1000)}s). Last error (${cls}): ${reason}. No changes were made to your workspace.`
       );
     }
   };
@@ -148,9 +200,6 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
 
   const modelSessionsInThisRun = new Map<string, number>();
 
-  let lastErr: unknown;
-  let primaryErr: unknown;
-  let fallbackErr: unknown;
   let primaryRetried = false;
   let fallbackWaitMs = 0;
   const MAX_FALLBACK_WAIT_MS = 30_000;
@@ -160,6 +209,10 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
     const modelKey = target.model ?? target.agent;
     const isFallback = a > 0;
     const wasInitiallyHealthy = !o.isModelHealthy || o.isModelHealthy(modelKey);
+
+    if (isFallback && failoverStart === undefined) {
+      failoverStart = now();
+    }
 
     checkBudget();
 
@@ -192,6 +245,11 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
           throw e instanceof IterationLimitError ? e : new IterationLimitError(e instanceof Error ? e.message : String(e));
         }
         if (o.canRetry && !o.canRetry()) throw new ForgeFailure('The run stopped after an approved operation; automatic replay was skipped.');
+
+        if (!isConfigError(e) && failoverStart === undefined) {
+          failoverStart = now();
+        }
+
         if (a === 0 && o.shouldFallbackImmediately?.(e)) break;
 
         if (a === 0 && i > 0) primaryRetried = true;
@@ -216,7 +274,7 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
           }
           checkBudget();
           const delay = Math.min(2000, o.backoffMs * 2 ** i);
-          const remainingBudget = failoverBudgetMs - (now() - startTime);
+          const remainingBudget = budgetLeft();
           if (remainingBudget <= 0) {
             checkBudget();
           }
@@ -238,7 +296,7 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
             delay = Math.min(delay, remaining);
             fallbackWaitMs += delay;
           }
-          const remainingBudget = failoverBudgetMs - (now() - startTime);
+          const remainingBudget = budgetLeft();
           if (remainingBudget <= 0) {
             checkBudget();
           }
@@ -249,6 +307,9 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
       }
     }
     if (a < targets.length - 1) {
+      if (failoverStart === undefined) {
+        failoverStart = now();
+      }
       o.onFallback?.(lastErr, target, targets[a + 1]);
     }
   }
