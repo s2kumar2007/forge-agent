@@ -66,6 +66,7 @@ function attachCopyButton(bubble) {
   btn.className = 'copy-btn';
   btn.textContent = 'Copy';
   btn.title = 'Copy response';
+  btn.setAttribute('aria-label', 'Copy response');
   btn.onclick = (e) => {
     e.stopPropagation();
     const clone = bubble.cloneNode(true);

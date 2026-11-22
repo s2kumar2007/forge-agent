@@ -986,15 +986,16 @@ code, pre {
   background: var(--forge-scrollbar-hover, rgba(100, 100, 100, 0.7));
 }
 
+:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder) !important;
+  outline-offset: 1px !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  #log {
-    scroll-behavior: auto;
-  }
-  button {
-    transition: none;
-  }
-  .character-viewport * {
-    animation: none !important;
-    transition: none !important;
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -142,15 +142,15 @@ export class ChatPanel {
       </div>
     </div>
     <div id="theme-switch" class="theme-switch" role="radiogroup" aria-label="Theme mode">
-      <button type="button" class="theme-btn active" data-theme="auto" role="radio" aria-checked="true" tabindex="0" title="Auto (follow VS Code)">
+      <button type="button" class="theme-btn active" data-theme="auto" role="radio" aria-checked="true" tabindex="0" title="Auto (follow VS Code)" aria-label="Auto theme">
         <span class="theme-icon" aria-hidden="true">&#9680;</span>
         <span class="sr-only">Auto</span>
       </button>
-      <button type="button" class="theme-btn" data-theme="light" role="radio" aria-checked="false" tabindex="0" title="White (Light theme)">
+      <button type="button" class="theme-btn" data-theme="light" role="radio" aria-checked="false" tabindex="0" title="White (Light theme)" aria-label="Light theme">
         <span class="theme-icon" aria-hidden="true">&#9728;</span>
         <span class="sr-only">White</span>
       </button>
-      <button type="button" class="theme-btn" data-theme="dark" role="radio" aria-checked="false" tabindex="0" title="Black (Dark theme)">
+      <button type="button" class="theme-btn" data-theme="dark" role="radio" aria-checked="false" tabindex="0" title="Black (Dark theme)" aria-label="Dark theme">
         <span class="theme-icon" aria-hidden="true">&#9789;</span>
         <span class="sr-only">Black</span>
       </button>
@@ -177,7 +177,7 @@ export class ChatPanel {
   </div>
   <div id="token-bar-label">0 / 2000 est. tokens</div>
 </div>
-<div id="log"></div>
+<div id="log" aria-live="polite"></div>
 <div id="ac"></div>
 <div id="ask-forge-container">
   <div id="chips">
