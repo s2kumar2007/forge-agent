@@ -40,10 +40,13 @@ export class ChatPanel {
   private constructor(private panel: vscode.WebviewPanel, private ctx: vscode.ExtensionContext, private controller: AgentController, private deps: WorkspaceContextDeps) {
     panel.webview.html = this.html(panel.webview);
     panel.onDidDispose(() => { if (this.sending) { this.sendAbort.abort(); void this.controller.cancel(); } ChatPanel.current = undefined; });
-    panel.webview.onDidReceiveMessage((m: { type: string; text?: string; prefix?: string }) => {
+    panel.webview.onDidReceiveMessage((m: { type: string; text?: string; prefix?: string; theme?: string }) => {
       if (m.type === 'send' && m.text) void this.send(m.text);
       if (m.type === 'suggest') void this.deps.suggest(m.prefix ?? '').then((items) => this.post({ type: 'suggestions', items }));
       if (m.type === 'stop') { this.sendAbort.abort(); void this.controller.cancel(); }
+      if (m.type === 'setTheme' && (m.theme === 'auto' || m.theme === 'light' || m.theme === 'dark')) {
+        void vscode.workspace.getConfiguration('forge').update('panel.theme', m.theme, vscode.ConfigurationTarget.Global);
+      }
     });
   }
 
@@ -103,6 +106,7 @@ export class ChatPanel {
     const css = webview.asWebviewUri(vscode.Uri.joinPath(this.ctx.extensionUri, 'media', 'main.css'));
     const logo = webview.asWebviewUri(vscode.Uri.joinPath(this.ctx.extensionUri, 'media', 'logo.png'));
     const guide3d = getConfig().guideCharacter3d;
+    const panelTheme = getConfig().panelTheme;
     return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <link rel="stylesheet" href="${css}"></head><body>
@@ -113,9 +117,26 @@ export class ChatPanel {
       <div class="header-title">Forge Agent</div>
     </div>
   </div>
-  <div class="header-status">
-    <span class="status-dot healthy" id="status-dot"></span>
-    <span id="status-text">forge-nvidia / nemotron-3.5</span>
+  <div class="header-right">
+    <div id="theme-switch" class="theme-switch" role="radiogroup" aria-label="Theme mode">
+      <button type="button" class="theme-btn active" data-theme="auto" role="radio" aria-checked="true" tabindex="0" title="Auto (follow VS Code)">
+        <span class="theme-icon" aria-hidden="true">&#9680;</span>
+        <span class="sr-only">Auto</span>
+      </button>
+      <button type="button" class="theme-btn" data-theme="light" role="radio" aria-checked="false" tabindex="0" title="White (Light theme)">
+        <span class="theme-icon" aria-hidden="true">&#9728;</span>
+        <span class="sr-only">White</span>
+      </button>
+      <button type="button" class="theme-btn" data-theme="dark" role="radio" aria-checked="false" tabindex="0" title="Black (Dark theme)">
+        <span class="theme-icon" aria-hidden="true">&#9789;</span>
+        <span class="sr-only">Black</span>
+      </button>
+    </div>
+    <span id="theme-high-contrast-notice" class="theme-hc-notice" style="display:none;" aria-live="polite">Using High Contrast theme</span>
+    <div class="header-status">
+      <span class="status-dot healthy" id="status-dot"></span>
+      <span id="status-text">forge-nvidia / nemotron-3.5</span>
+    </div>
   </div>
 </header>
 <div id="timeline" class="timeline">
@@ -167,7 +188,7 @@ export class ChatPanel {
   <div id="metrics-footer">Ready</div>
 </footer>
 <script nonce="${nonce}">
-  window.__FORGE_INITIAL_CONFIG__ = { guideCharacter3d: ${guide3d} };
+  window.__FORGE_INITIAL_CONFIG__ = { guideCharacter3d: ${guide3d}, panelTheme: '${panelTheme}' };
 </script>
 <script nonce="${nonce}" src="${js}"></script>
 <script nonce="${nonce}" src="${characterJs}"></script></body></html>`;

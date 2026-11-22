@@ -97,13 +97,13 @@ export function renderCharacterSvg(state: CharacterState): string {
   <polygon points="20,116 14,119 20,122" fill="#3a3c4a" />
 
   <!-- Torso & Shoulders -->
-  <rect x="58" y="98" width="44" height="40" rx="6" fill="url(#body-grad)" stroke="var(--vscode-panel-border, #3a3f58)" stroke-width="1.5" />
+  <rect x="58" y="98" width="44" height="40" rx="10" fill="url(#body-grad)" stroke="var(--forge-border, var(--vscode-panel-border, #3a3f58))" stroke-width="1.5" />
   <!-- Chest Core Plate -->
-  <circle cx="80" cy="116" r="8" fill="#1b1c26" stroke="${visor}" stroke-width="1.5" />
+  <circle cx="80" cy="116" r="8" fill="var(--forge-bg, #1b1c26)" stroke="${visor}" stroke-width="1.5" />
   <circle cx="80" cy="116" r="4" fill="${visor}" opacity="0.8" filter="url(#glow-${state})" />
 
   <!-- Neck -->
-  <rect x="74" y="92" width="12" height="8" rx="2" fill="#2d303e" />
+  <rect x="74" y="92" width="12" height="8" rx="4" fill="var(--forge-border, #2d303e)" />
 
   <!-- Left Arm (Resting on Anvil) -->
   <path d="M 58 104 Q 42 110 38 120" stroke="url(#metal-grad)" stroke-width="6" stroke-linecap="round" fill="none" />
@@ -121,16 +121,16 @@ export function renderCharacterSvg(state: CharacterState): string {
        <!-- Hammer Handle -->
        <line x1="108" y1="126" x2="94" y2="136" stroke="#a16207" stroke-width="3" stroke-linecap="round" />
        <!-- Hammer Head -->
-       <rect x="88" y="132" width="8" height="12" rx="1" transform="rotate(-30 92 138)" fill="url(#metal-grad)" stroke="#6b7280" stroke-width="1" />`}
+       <rect x="88" y="132" width="8" height="12" rx="2" transform="rotate(-30 92 138)" fill="url(#metal-grad)" stroke="#6b7280" stroke-width="1" />`}
 
   <!-- Head Frame -->
-  <rect x="52" y="58" width="56" height="38" rx="8" fill="#282a36" stroke="var(--vscode-focusBorder, #007acc)" stroke-width="1.5" />
+  <rect x="52" y="58" width="56" height="38" rx="12" fill="var(--forge-widget-bg, #282a36)" stroke="var(--forge-focus-border, var(--vscode-focusBorder, #007acc))" stroke-width="1.5" />
   <!-- Ear Antenna Exhausts -->
-  <rect x="46" y="68" width="6" height="14" rx="2" fill="#3f4254" />
-  <rect x="108" y="68" width="6" height="14" rx="2" fill="#3f4254" />
+  <rect x="46" y="68" width="6" height="14" rx="3" fill="var(--forge-border, #3f4254)" />
+  <rect x="108" y="68" width="6" height="14" rx="3" fill="var(--forge-border, #3f4254)" />
 
   <!-- Visor Housing -->
-  <rect x="58" y="68" width="44" height="18" rx="4" fill="#0f1015" />
+  <rect x="58" y="68" width="44" height="18" rx="6" fill="var(--forge-bg, #0f1015)" />
   <!-- Glowing Visor Face -->
   <rect x="60" y="70" width="40" height="14" rx="3" fill="${visor}" opacity="0.3" />
   <rect x="62" y="72" width="36" height="10" rx="2" fill="${visor}" opacity="0.9" filter="url(#glow-${state})" />

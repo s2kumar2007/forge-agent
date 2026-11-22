@@ -1,19 +1,34 @@
-import { type CharacterState, type CharacterMode, mapEventToState, getStateAriaAnnouncement, redactCharacterSpeech } from './characterState';
+import {
+  type CharacterState,
+  type CharacterMode,
+  mapEventToState,
+  getStateAriaAnnouncement,
+  redactCharacterSpeech,
+} from './characterState';
 import { renderCharacterSvg } from './characterSvg';
 import { ForgeCharacter3D } from './character3d';
+import { type ForgeThemeMode, type ResolvedTheme, resolveTheme } from './theme';
 
 declare global {
   interface Window {
     __FORGE_INITIAL_CONFIG__?: {
       guideCharacter3d?: boolean;
+      panelTheme?: string;
     };
     __FORGE_CHARACTER_APP__?: CharacterApp;
+    vscode?: {
+      postMessage: (msg: any) => void;
+      getState: () => any;
+      setState: (state: any) => void;
+    };
   }
 }
 
 export class CharacterApp {
   private mode: CharacterMode = 'Off';
   private state: CharacterState = 'idle';
+  private themeMode: ForgeThemeMode = 'auto';
+  private resolvedTheme: ResolvedTheme = 'dark';
   private char3d: ForgeCharacter3D | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private svgContainer: HTMLElement | null = null;
@@ -21,7 +36,10 @@ export class CharacterApp {
   private speechBubble: HTMLElement | null = null;
   private ariaLive: HTMLElement | null = null;
   private modeButtons: NodeListOf<HTMLButtonElement> | null = null;
+  private themeButtons: NodeListOf<HTMLButtonElement> | null = null;
+  private themeHcNotice: HTMLElement | null = null;
   private bubbleTimeout: number | null = null;
+  private bodyObserver: MutationObserver | null = null;
 
   constructor() {
     this.init();
@@ -36,8 +54,10 @@ export class CharacterApp {
     this.speechBubble = document.getElementById('character-speech-bubble');
     this.ariaLive = document.getElementById('character-aria-live');
     this.modeButtons = document.querySelectorAll('.character-mode-toggle .mode-btn');
+    this.themeButtons = document.querySelectorAll('.theme-switch .theme-btn');
+    this.themeHcNotice = document.getElementById('theme-high-contrast-notice');
 
-    // Determine initial mode: sessionStorage > config setting (off by default)
+    // Determine initial character mode: sessionStorage > config setting (off by default)
     let initialMode: CharacterMode = 'Off';
     try {
       const saved = sessionStorage.getItem('forge.characterMode');
@@ -52,19 +72,32 @@ export class CharacterApp {
       }
     }
 
+    // Determine initial theme mode: webview state > sessionStorage > setting > 'auto'
+    let initialTheme: ForgeThemeMode = 'auto';
+    try {
+      const vsState = window.vscode?.getState();
+      const savedTheme = vsState?.themeMode || sessionStorage.getItem('forge.themeMode');
+      if (savedTheme === 'auto' || savedTheme === 'light' || savedTheme === 'dark') {
+        initialTheme = savedTheme;
+      } else if (window.__FORGE_INITIAL_CONFIG__?.panelTheme) {
+        const t = window.__FORGE_INITIAL_CONFIG__.panelTheme;
+        if (t === 'light' || t === 'dark') initialTheme = t;
+      }
+    } catch {}
+
     this.bindEvents();
+    this.setThemeMode(initialTheme, false);
     this.setMode(initialMode, false);
   }
 
   private bindEvents(): void {
-    // Mode toggle buttons
+    // Mode toggle buttons (3D / 2D / Off)
     if (this.modeButtons) {
       this.modeButtons.forEach((btn: HTMLButtonElement) => {
         btn.addEventListener('click', () => {
           const m = btn.getAttribute('data-mode') as CharacterMode;
           if (m) this.setMode(m, true);
         });
-        // Keyboard accessible Space / Enter
         btn.addEventListener('keydown', (e: KeyboardEvent) => {
           if (e.key === ' ' || e.key === 'Enter') {
             e.preventDefault();
@@ -75,14 +108,42 @@ export class CharacterApp {
       });
     }
 
-    // Input listeners to detect listening / focus
+    // Theme toggle buttons (Auto / White / Black)
+    if (this.themeButtons) {
+      this.themeButtons.forEach((btn: HTMLButtonElement) => {
+        btn.addEventListener('click', () => {
+          const t = btn.getAttribute('data-theme') as ForgeThemeMode;
+          if (t) this.setThemeMode(t, true);
+        });
+        btn.addEventListener('keydown', (e: KeyboardEvent) => {
+          if (e.key === ' ' || e.key === 'Enter') {
+            e.preventDefault();
+            const t = btn.getAttribute('data-theme') as ForgeThemeMode;
+            if (t) this.setThemeMode(t, true);
+          }
+        });
+      });
+    }
+
+    // Observe body class changes to update theme live if in Auto mode
+    if (typeof MutationObserver !== 'undefined' && document.body) {
+      this.bodyObserver = new MutationObserver(() => {
+        this.applyThemeResolution(this.themeMode);
+      });
+      this.bodyObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    // Input listeners: head looks toward prompt box while typing (DOES NOT set listening)
     const input = document.getElementById('input');
     if (input) {
       input.addEventListener('focus', () => {
-        if (this.state === 'idle') this.setState('listening');
+        this.char3d?.setPromptTyping(true);
+      });
+      input.addEventListener('input', () => {
+        this.char3d?.setPromptTyping(true);
       });
       input.addEventListener('blur', () => {
-        if (this.state === 'listening') this.setState('idle');
+        this.char3d?.setPromptTyping(false);
       });
     }
 
@@ -109,6 +170,17 @@ export class CharacterApp {
   }
 
   public handleHostMessage(m: any): void {
+    if (m.type === 'config' && m.panelTheme) {
+      this.setThemeMode(m.panelTheme, false);
+      return;
+    }
+
+    if (m.type === 'delta') {
+      this.char3d?.setActivity(1.0);
+    } else if (m.type === 'diffPreview') {
+      this.char3d?.triggerHammerTap();
+    }
+
     const nextState = mapEventToState(m, this.state);
     let speech: string | undefined;
 
@@ -123,6 +195,76 @@ export class CharacterApp {
     }
 
     this.setState(nextState, speech);
+  }
+
+  public setThemeMode(mode: ForgeThemeMode, persist = true): void {
+    this.themeMode = mode;
+    if (persist) {
+      try {
+        sessionStorage.setItem('forge.themeMode', mode);
+        const vs = window.vscode;
+        if (vs) {
+          const st = vs.getState() || {};
+          vs.setState({ ...st, themeMode: mode });
+          vs.postMessage({ type: 'setTheme', theme: mode });
+        }
+      } catch {}
+    }
+
+    this.applyThemeResolution(mode);
+  }
+
+  private applyThemeResolution(mode: ForgeThemeMode): void {
+    const bodyClass = document.body ? document.body.className : '';
+    const res = resolveTheme(mode, bodyClass);
+    this.resolvedTheme = res.theme;
+
+    // Update Theme Switch UI
+    if (this.themeButtons) {
+      this.themeButtons.forEach((btn: HTMLButtonElement) => {
+        const isMatch = btn.getAttribute('data-theme') === mode;
+        btn.classList.toggle('active', isMatch);
+        btn.setAttribute('aria-checked', isMatch ? 'true' : 'false');
+        if (res.isHighContrast) {
+          btn.disabled = true;
+          btn.style.opacity = '0.5';
+        } else {
+          btn.disabled = false;
+          btn.style.opacity = '1';
+        }
+      });
+    }
+
+    if (this.themeHcNotice) {
+      this.themeHcNotice.style.display = res.isHighContrast ? 'inline-block' : 'none';
+    }
+
+    // Apply attribute on <html>
+    if (typeof document !== 'undefined' && document.documentElement) {
+      if (res.isHighContrast || mode === 'auto') {
+        document.documentElement.removeAttribute('data-forge-theme');
+      } else if (mode === 'light') {
+        document.documentElement.setAttribute('data-forge-theme', 'light');
+      } else if (mode === 'dark') {
+        document.documentElement.setAttribute('data-forge-theme', 'dark');
+      }
+    }
+
+    // Propagate resolved theme to 3D character
+    this.char3d?.setTheme(res.theme);
+
+    // Update 2D SVG avatar if currently rendered
+    if (this.mode === '2D' && this.svgContainer) {
+      this.svgContainer.innerHTML = renderCharacterSvg(this.state);
+    }
+  }
+
+  public getThemeMode(): ForgeThemeMode {
+    return this.themeMode;
+  }
+
+  public getResolvedTheme(): ResolvedTheme {
+    return this.resolvedTheme;
   }
 
   public setMode(newMode: CharacterMode, persist = true): void {
@@ -178,6 +320,7 @@ export class CharacterApp {
               this.setMode('2D', true);
             },
           });
+          this.char3d.setTheme(this.resolvedTheme);
         } catch {
           // Fallback to 2D if WebGL fails during constructor
           this.setMode('2D', true);
@@ -226,6 +369,10 @@ export class CharacterApp {
   }
 
   public dispose(): void {
+    if (this.bodyObserver) {
+      this.bodyObserver.disconnect();
+      this.bodyObserver = null;
+    }
     if (this.bubbleTimeout !== null) {
       clearTimeout(this.bubbleTimeout);
       this.bubbleTimeout = null;

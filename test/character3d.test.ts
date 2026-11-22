@@ -149,10 +149,11 @@ describe('ForgeCharacter3D & Fallback Mechanisms', () => {
       currentState: 'idle',
       startAnimation: ForgeCharacter3D.prototype.startAnimation,
       setState: ForgeCharacter3D.prototype.setState,
-      applyStatePose: vi.fn(),
+      applyJointAngles: vi.fn(),
       render: vi.fn(),
-      visorMesh: { material: { color: { set: vi.fn() }, emissive: { set: vi.fn() } } },
-      coreMesh: { material: { emissive: { set: vi.fn() } } },
+      visorMaterial: { color: { set: vi.fn() }, emissive: { set: vi.fn() } },
+      thoughtOrbsGroup: { visible: false },
+      sparkPoints: { visible: false },
     };
 
     // Calling startAnimation() directly should be a no-op
@@ -161,9 +162,34 @@ describe('ForgeCharacter3D & Fallback Mechanisms', () => {
 
     // Calling setState() should render a static pose once without animating
     charObj.setState('reviewing');
-    expect(charObj.applyStatePose).toHaveBeenCalledWith('reviewing', 0);
+    expect(charObj.applyJointAngles).toHaveBeenCalled();
     expect(charObj.render).toHaveBeenCalled();
     expect(charObj.running).toBe(false);
+  });
+
+  it('updates materials, rim light, and shadow cleanly in setTheme without recreating scene', () => {
+    const charObj: any = {
+      disposed: false,
+      reducedMotion: false,
+      bodyMaterial: { color: { set: vi.fn() } },
+      headMaterial: { color: { set: vi.fn() } },
+      jointMaterial: { color: { set: vi.fn() } },
+      metalMaterial: { color: { set: vi.fn() } },
+      rimLight: { color: { set: vi.fn() }, intensity: 0 },
+      shadowMesh: { material: { opacity: 0 } },
+      setTheme: ForgeCharacter3D.prototype.setTheme,
+      render: vi.fn(),
+    };
+
+    charObj.setTheme('light');
+    expect(charObj.bodyMaterial.color.set).toHaveBeenCalled();
+    expect(charObj.rimLight.color.set).toHaveBeenCalled();
+    expect(charObj.rimLight.intensity).toBe(0.6);
+    expect(charObj.shadowMesh.material.opacity).toBe(0.16);
+
+    charObj.setTheme('dark');
+    expect(charObj.rimLight.intensity).toBe(0.9);
+    expect(charObj.shadowMesh.material.opacity).toBe(0.32);
   });
 });
 
@@ -203,6 +229,17 @@ describe('CharacterApp Webview Mode & Accessibility Controller', () => {
       getElementById: (id: string) => mockDom[id] || null,
       querySelectorAll: () => [],
       addEventListener: vi.fn(),
+      documentElement: {
+        setAttribute: vi.fn(),
+        removeAttribute: vi.fn(),
+        getAttribute: vi.fn(),
+      },
+      body: {
+        className: 'vscode-dark',
+        classList: {
+          contains: (cls: string) => cls === 'vscode-dark',
+        },
+      },
     };
 
     (global as any).window = {
@@ -268,5 +305,66 @@ describe('CharacterApp Webview Mode & Accessibility Controller', () => {
     expect(mockDom['character-speech-bubble'].textContent).not.toContain('.env');
     expect(mockDom['character-speech-bubble'].textContent).not.toContain('server.key');
     expect(mockDom['character-speech-bubble'].textContent).toContain('[REDACTED_SECRET_FILE]');
+  });
+
+  it('does NOT trigger listening state on input focus, only on explicit micActive message', () => {
+    let focusListener: any;
+    mockDom['input'].addEventListener = vi.fn((event: string, cb: any) => {
+      if (event === 'focus') focusListener = cb;
+    });
+
+    const app = new CharacterApp();
+    expect(app.getState()).toBe('idle');
+
+    // Simulate input focus
+    if (focusListener) focusListener();
+    expect(app.getState()).toBe('idle'); // Must stay idle, NOT listening!
+
+    // Explicit micActive message triggers listening
+    app.handleHostMessage({ type: 'micActive' });
+    expect(app.getState()).toBe('listening');
+
+    app.handleHostMessage({ type: 'micInactive' });
+    expect(app.getState()).toBe('idle');
+  });
+
+  it('switches themes (Auto, White, Black) and updates DOM attributes and storage', () => {
+    let setAttrKey = '';
+    let setAttrVal = '';
+    let removeAttrKey = '';
+
+    (global as any).document.documentElement = {
+      setAttribute: (k: string, v: string) => {
+        setAttrKey = k;
+        setAttrVal = v;
+      },
+      removeAttribute: (k: string) => {
+        removeAttrKey = k;
+      },
+    };
+
+    const app = new CharacterApp();
+
+    // Switch to White (Light)
+    app.setThemeMode('light', true);
+    expect(app.getThemeMode()).toBe('light');
+    expect(app.getResolvedTheme()).toBe('light');
+    expect(setAttrKey).toBe('data-forge-theme');
+    expect(setAttrVal).toBe('light');
+    expect(sessionStorageStore['forge.themeMode']).toBe('light');
+
+    // Switch to Black (Dark)
+    app.setThemeMode('dark', true);
+    expect(app.getThemeMode()).toBe('dark');
+    expect(app.getResolvedTheme()).toBe('dark');
+    expect(setAttrKey).toBe('data-forge-theme');
+    expect(setAttrVal).toBe('dark');
+    expect(sessionStorageStore['forge.themeMode']).toBe('dark');
+
+    // Switch back to Auto
+    app.setThemeMode('auto', true);
+    expect(app.getThemeMode()).toBe('auto');
+    expect(removeAttrKey).toBe('data-forge-theme');
+    expect(sessionStorageStore['forge.themeMode']).toBe('auto');
   });
 });

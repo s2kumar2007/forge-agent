@@ -64,10 +64,12 @@ describe('Forge Character State Machine & Safety', () => {
     expect(mapEventToState({ type: 'done', status: 'cancelled' }, 'thinking')).toBe('idle');
   });
 
-  it('maps user input and mic events to listening', () => {
-    expect(mapEventToState({ type: 'inputFocus' }, 'idle')).toBe('listening');
+  it('maps explicit mic events to listening, but inputFocus does not trigger listening', () => {
+    // FIX: inputFocus must NOT trigger listening
+    expect(mapEventToState({ type: 'inputFocus' }, 'idle')).toBe('idle');
+    // Explicit micActive triggers listening
     expect(mapEventToState({ type: 'micActive' }, 'idle')).toBe('listening');
-    expect(mapEventToState({ type: 'inputBlur' }, 'listening')).toBe('idle');
+    expect(mapEventToState({ type: 'micInactive' }, 'listening')).toBe('idle');
   });
 
   it('handles busy toggling between idle and thinking', () => {

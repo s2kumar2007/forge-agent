@@ -17,5 +17,6 @@ export function getConfig() {
     explorationBudget: Math.max(1, c.get<number>('explorationBudget', 12)),
     faultInjection: c.get<string>('faultInjection', 'none'),
     guideCharacter3d: c.get<boolean>('guide.character3d', false),
+    panelTheme: c.get<string>('panel.theme', 'auto'),
   };
 }

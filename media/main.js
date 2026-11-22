@@ -1,5 +1,6 @@
 // Webview script. textContent is used everywhere (never innerHTML) so model output cannot inject markup.
 const vscode = acquireVsCodeApi();
+window.vscode = vscode;
 const log = document.getElementById('log');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');

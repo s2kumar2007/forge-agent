@@ -156,11 +156,10 @@ export function mapEventToState(event: CharacterEvent, currentState: CharacterSt
     }
 
     case 'listening':
-    case 'inputFocus':
     case 'micActive':
       return 'listening';
 
-    case 'inputBlur':
+    case 'micInactive':
     case 'reset':
       return 'idle';
 

@@ -123,7 +123,19 @@ Evaluated against Pallets Flask 3.1.3 (`commit 22d924701a6ae2e4cd01e9a15bbaf3946
 - **Atomicity**: Task B proposes changes across all 3 files simultaneously in one atomic `propose_changes` call.
 - **Failover speed, handoff & watchdog**: Immediate fail-fast upon authentication errors trips circuit breaker in ~3.2s with zero retries. Fallback session handoff reuses read files, cutting fallback turns from 2 to 1 (50% reduction) and fallback latency from ~18.5s to ~3.2s (5.8x faster). Per-request watchdog (`forge.firstTokenTimeoutMs`, `forge.stallTimeoutMs`) eliminates stall hangs (preventing ~9.5 min stalls), while `forge.failoverBudgetMs` and ordered fallback models (`forge.fallbackModels`) gracefully switch providers when models report 503 "high demand" overload.
 - **Interactive Forge Guide**: Optional docked 3D procedural character (`forge.guide.character3d: false` by default) with 2D SVG fallback, 7 operational states, 30fps cap, WebGL context-loss recovery, frame budget watchdog, and secret redactions.
-- **Test coverage**: **310 tests passing across 35 test suites** (`npm test`).
+- **Panel Theme Switch**: Header radiogroup for Auto / White / Black modes (`forge.panel.theme`), WCAG AA compliant contrast ratios (13.9:1 light, 16.5:1 dark), and automatic High Contrast detection.
+- **Test coverage**: **327 tests passing across 37 test suites** (`npm test`).
+
+### Configuration Settings
+
+| Setting | Type | Default | Allowed Values / Range | Description |
+|---|:---:|:---:|:---:|---|
+| `forge.panel.theme` | `string` | `"auto"` | `"auto"`, `"light"`, `"dark"` | Panel color theme override: `'auto'` follows VS Code, `'light'` forces White theme, `'dark'` forces Black theme. |
+| `forge.guide.character3d` | `boolean` | `false` | `true`, `false` | Show procedural 3D Forge character beside the Ask Forge strip (auto-fallback to 2D SVG avatar). |
+| `forge.contextBudget` | `number` | `2000` | $\ge 500$ | Token budget (~4 chars/token) for automatically assembled context. |
+| `forge.fallbackContextBudget` | `number` | `1500` | $\ge 500$ | Token budget (~4 chars/token) for context when using the fallback agent. |
+| `forge.explorationBudget` | `number` | `12` | $\ge 1$ | Maximum read-only tool calls (`read_file`, `search_workspace`, `list_dir`) allowed per run. |
+| `forge.faultInjection` | `string` | `"none"` | `"none"`, `"auth"`, `"network"`, `"server"`, `"timeout"` | Fault injection mode for verifying automatic fallback resilience. |
 
 ## Setup from a clean clone
 

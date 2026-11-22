@@ -119,6 +119,16 @@
           "type": "boolean",
           "default": false,
           "description": "Show a procedural 3D Forge character beside the Ask Forge strip (falls back to 2D SVG avatar if WebGL is unavailable or slow)."
+        },
+        "forge.panel.theme": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "light",
+            "dark"
+          ],
+          "default": "auto",
+          "description": "Panel color theme override: 'auto' follows VS Code, 'light' forces White theme, 'dark' forces Black theme."
         }
       }
     },
