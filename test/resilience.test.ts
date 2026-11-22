@@ -738,5 +738,56 @@ describe('quota failure messages (ITEM 2)', () => {
       expect(ui.notices.some((n) => n.includes('reusing 0 files'))).toBe(false);
       expect(ui.notices.some((n) => n.includes('Primary unavailable, continuing on fallback'))).toBe(true);
     });
+
+    it('primary long attempt + slow config error does not eat into failover budget (STEP 2)', async () => {
+      let currentTime = 1000;
+      const calls: string[] = [];
+
+      const { o } = opts(
+        async (a) => {
+          calls.push(a);
+          if (a === 'p') {
+            // Simulate 10s spent on primary before throwing config error
+            currentTime += 10_000;
+            const err: any = new Error('Configure the required models in TrueForge: model not configured');
+            err.status = 422;
+            throw err;
+          }
+          // Fallback takes 2s
+          currentTime += 2000;
+          return 'fallback-success';
+        },
+        {
+          failoverBudgetMs: 5000, // 5s failover budget
+          now: () => currentTime,
+        }
+      );
+
+      // Total time elapsed is 12s, which exceeds 5s, but primary + config error cost 0 against failover budget
+      const result = await runWithFallback(o);
+      expect(result).toBe('fallback-success');
+      expect(calls).toEqual(['p', 'f']);
+    });
+
+    it('budget exceeded error includes last error class and reason (STEP 2)', async () => {
+      let currentTime = 1000;
+      const { o } = opts(
+        async () => {
+          throw new Error('connect ECONNREFUSED 127.0.0.1:8790');
+        },
+        {
+          failoverBudgetMs: 3000,
+          now: () => currentTime,
+          sleep: async (ms: number) => {
+            currentTime += ms;
+          },
+          backoffMs: 4000, // First retry delay will exceed 3s budget
+        }
+      );
+
+      await expect(runWithFallback(o)).rejects.toThrow(
+        'Failover budget exceeded (3s). Last error (network): could not reach the model. No changes were made to your workspace.'
+      );
+    });
   });
 });

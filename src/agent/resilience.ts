@@ -167,12 +167,24 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
   }
 
   const now = o.now ?? Date.now;
-  const startTime = now();
   const failoverBudgetMs = o.failoverBudgetMs ?? 45_000;
+  let failoverStart: number | undefined;
+
+  let lastErr: unknown;
+  let primaryErr: unknown;
+  let fallbackErr: unknown;
+
+  const budgetLeft = (): number => {
+    if (failoverStart === undefined) return failoverBudgetMs;
+    return failoverBudgetMs - (now() - failoverStart);
+  };
+
   const checkBudget = () => {
-    if (now() - startTime >= failoverBudgetMs) {
+    if (failoverStart !== undefined && now() - failoverStart >= failoverBudgetMs) {
+      const cls = lastErr ? classifyError(lastErr) : 'other';
+      const reason = lastErr ? briefReason(lastErr) : 'unknown error';
       throw new ForgeFailure(
-        `Failover budget exceeded (${Math.round(failoverBudgetMs / 1000)}s). No changes were made to your workspace.`
+        `Failover budget exceeded (${Math.round(failoverBudgetMs / 1000)}s). Last error (${cls}): ${reason}. No changes were made to your workspace.`
       );
     }
   };
@@ -188,9 +200,6 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
 
   const modelSessionsInThisRun = new Map<string, number>();
 
-  let lastErr: unknown;
-  let primaryErr: unknown;
-  let fallbackErr: unknown;
   let primaryRetried = false;
   let fallbackWaitMs = 0;
   const MAX_FALLBACK_WAIT_MS = 30_000;
@@ -200,6 +209,10 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
     const modelKey = target.model ?? target.agent;
     const isFallback = a > 0;
     const wasInitiallyHealthy = !o.isModelHealthy || o.isModelHealthy(modelKey);
+
+    if (isFallback && failoverStart === undefined) {
+      failoverStart = now();
+    }
 
     checkBudget();
 
@@ -232,6 +245,11 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
           throw e instanceof IterationLimitError ? e : new IterationLimitError(e instanceof Error ? e.message : String(e));
         }
         if (o.canRetry && !o.canRetry()) throw new ForgeFailure('The run stopped after an approved operation; automatic replay was skipped.');
+
+        if (!isConfigError(e) && failoverStart === undefined) {
+          failoverStart = now();
+        }
+
         if (a === 0 && o.shouldFallbackImmediately?.(e)) break;
 
         if (a === 0 && i > 0) primaryRetried = true;
@@ -256,7 +274,7 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
           }
           checkBudget();
           const delay = Math.min(2000, o.backoffMs * 2 ** i);
-          const remainingBudget = failoverBudgetMs - (now() - startTime);
+          const remainingBudget = budgetLeft();
           if (remainingBudget <= 0) {
             checkBudget();
           }
@@ -278,7 +296,7 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
             delay = Math.min(delay, remaining);
             fallbackWaitMs += delay;
           }
-          const remainingBudget = failoverBudgetMs - (now() - startTime);
+          const remainingBudget = budgetLeft();
           if (remainingBudget <= 0) {
             checkBudget();
           }
@@ -289,6 +307,9 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
       }
     }
     if (a < targets.length - 1) {
+      if (failoverStart === undefined) {
+        failoverStart = now();
+      }
       o.onFallback?.(lastErr, target, targets[a + 1]);
     }
   }
