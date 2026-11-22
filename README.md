@@ -72,6 +72,14 @@ The chat webview panel (`src/panel/ChatPanel.ts`, `media/`) provides:
 - **Header controls**: Theme selection (`Auto` / `Light` / `Dark`) mapped to `forge.panel.theme`, and optional 3D procedural guide character (`forge.guide.character3d: false` by default, with 2D SVG fallback).
 - **Prompt chips & utilities**: Quick-action prompt suggestions and response copy buttons.
 
+## TrueForge Session Visibility & Dashboard
+
+Forge Agent runs directly on TrueForge (`http://localhost:8790`). The TrueForge session dashboard provides full runtime observability over turn streaming, prompt injection, tool executions, and event timelines:
+
+| Task B: Agent Multi-File Turn Stream | Fallback Session: Inline Edit with Mistral |
+|:---:|:---:|
+| ![TrueForge Task B Session](docs/images/trueforge-session-task-b.jpg) | ![TrueForge Fallback Session](docs/images/trueforge-session-inline-fallback.jpg) |
+
 ## Context Assembly
 
 Before executing a turn in Agent mode, Forge Agent automatically gathers relevant workspace context:
