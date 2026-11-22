@@ -151,10 +151,11 @@ export class ChatPanel {
   <div class="timeline-step" id="step-done">Done</div>
 </div>
 <div id="token-bar-container">
+  <span id="token-bar-title" class="token-bar-title">Context budget</span>
   <div id="token-bar-track">
     <div id="token-bar-fill"></div>
   </div>
-  <div id="token-bar-label">0 / 3000 tokens</div>
+  <div id="token-bar-label">0 / 2000 est. tokens</div>
 </div>
 <div id="log"></div>
 <div id="ac"></div>

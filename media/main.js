@@ -6,6 +6,7 @@ const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
 const stopBtn = document.getElementById('stop');
 const metricsFooter = document.getElementById('metrics-footer');
+if (metricsFooter) metricsFooter.title = metricsFooter.textContent || 'Ready';
 const statusDot = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
 const tokenFill = document.getElementById('token-bar-fill');
@@ -47,14 +48,15 @@ function setStatus(state, text) {
 }
 
 function updateTokenBar(tokens, budget) {
-  const b = budget || 3000;
-  const pct = Math.min(100, Math.round((tokens / b) * 100));
+  const b = budget || 2000;
+  const pct = Math.round((tokens / b) * 100);
+  const fillPct = Math.min(100, Math.max(0, pct));
   if (tokenFill) {
-    tokenFill.style.width = pct + '%';
-    tokenFill.className = pct > 90 ? 'danger' : (pct > 75 ? 'warning' : '');
+    tokenFill.style.width = fillPct + '%';
+    tokenFill.className = pct > 100 ? 'over-budget' : '';
   }
   if (tokenLabel) {
-    tokenLabel.textContent = `${tokens} / ${b} tokens (${pct}%)`;
+    tokenLabel.textContent = `${tokens} / ${b} est. tokens (${pct}%)`;
   }
 }
 
@@ -209,7 +211,9 @@ window.addEventListener('message', ({ data: m }) => {
         const ttft = met.timeToFirstTokenMs !== undefined ? `${met.timeToFirstTokenMs}ms` : 'n/a';
         const total = `${(met.totalTimeMs / 1000).toFixed(2)}s`;
         const agent = met.agentAnswered || 'primary';
-        metricsFooter.textContent = `${agent} \u00B7 ${total} \u00B7 TTFT ${ttft} \u00B7 ${met.modelTurns} turns \u00B7 ~${met.estimatedTokensIn} in / ~${met.estimatedTokensOut} out`;
+        const text = `${agent} \u00B7 ${total} \u00B7 TTFT ${ttft} \u00B7 ${met.modelTurns} turns \u00B7 ~${met.estimatedTokensIn} in / ~${met.estimatedTokensOut} out`;
+        metricsFooter.textContent = text;
+        metricsFooter.title = text;
         if (met.agentAnswered) {
           if (met.agentAnswered.includes('fallback') || met.agentAnswered.includes('gemini')) {
             setStatus('fallback', met.agentAnswered);

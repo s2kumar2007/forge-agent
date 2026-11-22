@@ -301,6 +301,13 @@ html, body {
   overflow-x: hidden;
 }
 
+#token-bar-title {
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+
 #token-bar-track {
   flex: 1;
   height: 4px;
@@ -315,6 +322,10 @@ html, body {
   background: var(--vscode-progressBar-background, var(--vscode-button-background));
   border-radius: 2px;
   transition: width 0.3s ease, background 0.3s ease;
+}
+
+#token-bar-fill.over-budget {
+  background: var(--vscode-editorWarning-foreground, #cca700);
 }
 
 #token-bar-fill.warning {
