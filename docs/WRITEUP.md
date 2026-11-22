@@ -5,106 +5,82 @@
 - **Team name**: Git Push
 - **Institution**: VIT Vellore
 - **Members**:
-  - B. Sunil Kumar (Team Leader, GitHub: [s2kumar2007](https://github.com/s2kumar2007)): Lead developer of the extension core (TrueForge integration, MCP editor tools, context retrieval, diff review).
-  - Eric Bejoy (GitHub: [TODO: GitHub handle]): Testing, documentation and demo video [TODO: confirm role].
-  - Ashmit Sharma (GitHub: [TODO: GitHub handle]): Resilience and model fallback code.
-  - Shaurya Singla (GitHub: [TODO: GitHub handle]): Context and TrueForge session visibility code.
+  - B. Sunil Kumar (Team leader, GitHub: [s2kumar2007](https://github.com/s2kumar2007)): Team leader.
+  - Eric Bejoy (GitHub: [ericjbejoy-ux](https://github.com/ericjbejoy-ux)): Testing, documentation and demo video.
+  - Ashmit Sharma (GitHub: [ASH10022008](https://github.com/ASH10022008)): Resilience and model fallback code.
+  - Shaurya Singla (GitHub: [shauryasingla505](https://github.com/shauryasingla505)): Context and TrueForge session visibility code.
 
 ## 2. Starting point
 
-Written from scratch for Round 1 of the Techfest 2026-27 TrueFoundry Forge-a-thon. There is no upstream fork. Released under the MIT license. Core dependencies: `@truefoundry/trueforge-sdk` (0.182.0), `@modelcontextprotocol/sdk` (1.32.2), `@vscode/ripgrep` (1.18.0), `diff` (9.0.0), and `zod` (4.6.7).
+Written from scratch for Round 1 of the Techfest 2026-27 TrueFoundry Forge-a-thon. There is no upstream fork. Released under the MIT license. Core dependencies: `@truefoundry/trueforge-sdk` (0.182.0), `@modelcontextprotocol/sdk` (1.32.2), `@vscode/ripgrep` (1.18.0), `diff` (9.0.0), `three` (0.187.0), and `zod` (4.6.7).
 
 ## 3. Architecture on TrueForge
 
-```mermaid
-graph TD
-    User([Developer / VS Code]) <--> UI[Webview Chat Panel / Inline Edit]
-    UI <--> ExtCore[Forge Agent Core / AgentController]
-    ExtCore <--> Breaker[Circuit Breaker & Fallback Manager]
-    ExtCore <--> Review[Hunk Review & Undo Engine]
-    ExtCore <--> MCP[Loopback MCP Server: forge-editor]
-    MCP <--> Workspace[Workspace FS & Tools: Ripgrep, Symbols, Diagnostics, Tests]
-    ExtCore <--> TF[TrueForge Server: @truefoundry/trueforge-sdk]
-    TF <--> Primary[Primary Model: NVIDIA NIM Nemotron-3.5]
-    TF <--> Fallback[Fallback Model: Google Gemini 3.8 Flash]
-```
-
-Forge Agent coordinates between VS Code and TrueForge using an asynchronous client-server model:
-
-- **Sessions and turns**: The extension manages agent sessions using `@truefoundry/trueforge-sdk` over local HTTP/SSE. Conversations are initiated with `sessions.create` and processed via `createTurnStream`. As events arrive, `turnRunner` processes streamed chunks and maintains an index of active tool calls. When a tool call requires user confirmation, the turn pauses; upon user approval, a resume turn is dispatched containing a `user.tool_approval` payload.
-- **Editor MCP server**: The extension runs a stateless loopback MCP endpoint (`http://127.0.0.1:<port>/mcp`) registered dynamically via `PUT /api/v1/settings/mcp-servers` with a random bearer token. Ten editor tools are exposed:
-  - **Core tools**:
-    1. `read_file`: Bounded file inspection with mandatory line ranges for files exceeding 80 lines (max 80 lines per slice, or outline=true for definitions) to prevent token exhaustion. Secret-like files are refused with `blocked: secret-like file`.
-    2. `list_dir`: Directory listing with path-containment checks and secret-file omission.
-    3. `search_workspace`: Text and symbol search powered by ripgrep with ranking heuristics, omitting secret files.
-    4. `propose_write`: Virtual diff creation supporting whole files, exact-anchor replacements, or line ranges `{ startLine, endLine, newText }`, guarded against secret paths and stale external modifications via SHA-256 base hashes.
-    5. `run_command`: Workspace-root shell command execution with cancellation and process-tree termination.
-  - **Advanced tools**:
-    6. `propose_changes`: Atomic multi-file proposals across multiple workspace files with unified hunk review.
-    7. `search_symbols`: Workspace symbol search leveraging native language servers and indexers.
-    8. `find_references`: Workspace symbol reference search for impact analysis.
-    9. `get_diagnostics`: Real-time compiler and linter diagnostics for workspace files.
-    10. `run_tests`: Framework-aware test runner (`pytest`, `vitest`, `jest`, `cargo`) with confirmation gating.
-- **Secret file protection**: Across context assembly, `list_dir`, `search_workspace`, `read_file`, and `propose_write`, sensitive files (`.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*`, `*.p12`, `.git`) are strictly filtered and refused, while allowing legitimate configuration files such as `config.py`.
-- **Cross-request workspace cache**: A dedicated `WorkspaceCache` validates file lists and file contents against disk modification times (`mtimeMs`) and byte sizes (`size`) across requests, with automatic invalidation on VS Code file system watchers, text document changes, and proposed diff applications.
-- **Autonomous self-repair**: An integrated verify-and-repair loop runs upon completion of mutating changes to automatically detect and repair linter/syntax errors within up to 2 rounds.
-- **TrueForge harness features**: Preloaded tool schemas (`preload: true`) avoid discovery round-trips. Tool approval gates enforce user confirmation for `propose_write` and `run_command`. Context compaction triggers compress older conversation history (40000 tokens for NVIDIA NIM primary, 30000 for Gemini fallback). Dynamic subagents are enabled in configuration. The chat panel surfaces the TrueForge session ID (`Session: <id>`), subagent lifecycle events (`Subagent <title> started/finished`), and compaction notifications (`Context compacted`).
-- **Native UI experience**: Fully native VS Code design utilizing `--vscode-*` CSS variables, a 5-step progress timeline (`Context` -> `Model` -> `Tools` -> `Review` -> `Done`), model status indicator, token usage progress bar, quick action prompt chips, and streaming diff preview cards with confidence ratings (`HIGH`, `MEDIUM`, `LOW`).
+Forge Agent coordinates between VS Code and TrueForge using an asynchronous client-server architecture:
+- **Sessions, turns, and approvals**: The extension manages agent sessions via `@truefoundry/trueforge-sdk` over local HTTP/SSE (`http://localhost:8790`). Sessions are created with `sessions.create` and processed via `createTurnStream`. As streamed events arrive, `turnRunner` processes text deltas and tracks active tool calls in an id-keyed event index. When a tool call requires user confirmation, the turn pauses; upon user approval, a resume turn is dispatched containing `user.tool_approval` payloads using the pending event's `threadId` and `sourceEventId`.
+- **Editor MCP tools**: The extension runs an authenticated loopback MCP endpoint (`http://127.0.0.1:<port>/mcp`) registered dynamically via `PUT /api/v1/settings/mcp-servers` with a random bearer token. Ten editor tools are exposed across core and advanced suites:
+  - `read_file`: Bounded workspace file inspection with mandatory line ranges for files exceeding 80 lines (max 80 lines per slice, or `outline=true` for definitions) to prevent token exhaustion. Secret-like files are refused.
+  - `list_dir`: Directory listing with realpath containment and secret-file omission.
+  - `search_workspace`: Text and symbol search powered by ripgrep with ranking heuristics and secret-path omission.
+  - `propose_write`: Virtual diff creation supporting whole files, exact-anchor search/replace, or line ranges `{ startLine, endLine, newText }`, guarded by SHA-256 base hashes against stale external edits.
+  - `run_command`: Workspace-root shell command execution with cancellation and process-tree termination.
+  - `propose_changes`: Atomic multi-file proposals across multiple workspace files with unified hunk review.
+  - `search_symbols`: Workspace symbol search leveraging native language servers and indexers with definition snippets.
+  - `find_references`: Workspace symbol reference search for downstream impact analysis.
+  - `get_diagnostics`: Real-time compiler and linter diagnostics for workspace files.
+  - `run_tests`: Framework-aware test runner (`pytest`, `vitest`, `jest`, `npm`) with confirmation gating.
+- **Approval gates**: Read directly from the agent manifests: `forge-agent` and `forge-agent-fallback` require user approval for `propose_write`, `propose_changes`, `run_command`, and `run_tests`; `forge-inline` requires user approval for `propose_write`.
+- **Mutation lock**: A shared `withMutationLock` queue serializes mutating operations (`propose_write`, `propose_changes`, `run_command`, `run_tests`), preventing file write races while allowing concurrent read-only queries.
+- **Undo and cancellation**: `forge.undoLast` maintains an in-memory stack of up to 50 operations in `workspaceState`, checks current text before reverting, restores original CRLF/LF line endings, and deletes newly created files on undo. Pressing Stop calls `sessions.cancel`, clears review state, aborts pending approvals, and terminates running command process trees.
+- **Secret file protection**: Across context assembly, directory listings, searches, and file reads/writes, sensitive paths (`.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*`, `*.p12`, `.git`) are strictly filtered and refused, while allowing legitimate configuration files such as `config.py`.
+- **Harness features**: Agent manifests declare `preload: true` to avoid runtime discovery round-trips; context compaction triggers (40000 tokens for primary, 30000 for fallback, 5500 for inline); large tool response handling enabled (`large_tool_response: { enabled: true }`); dynamic subagents enabled where configured (`forge-agent` and `forge-agent-fallback`); and iteration limits (60 for `forge-agent` and `forge-agent-fallback`, 12 for `forge-inline`).
 
 ## 4. How context is selected
 
-Agent mode automatically gathers workspace context using a multi-stage retrieval strategy:
-
-1. **Explicit mentions**: Explicit `@file:path` and `@symbol:name` mentions in the prompt are parsed first and given top priority (capped at 40 lines for files, 25 signatures for symbols).
-2. **Ranked candidate shortlist**: Keywords extracted from the prompt are searched using ripgrep. Keyword and importer scans are combined into single alternated executions to reduce process-spawn latency. Matches are ranked by keyword frequency, file path relevance, symbol definitions, and downstream importers. Dense hit windows are capped at 40 lines.
-3. **Repo map**: A compact directory tree overview is budgeted to at most 20% of the total token allocation.
-4. **Cross-request and per-request caching**: Workspace file lists and document texts are cached across requests by `WorkspaceCache` validated by `mtimeMs` and `size`, while AST parses are cached for the duration of a single `assembleContext` run and immediately discarded.
-5. **Secret file exclusion**: All secret-like files (`.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*`, `*.p12`, `.git`) are omitted from context assembly scans and candidate lists.
-6. **Token budgeting**: Context size is budgeted against a default limit of `2000` tokens (`forge.contextBudget`), estimated at ~4 characters per token. When using the fallback agent, the budget is `1500` tokens (`forge.fallbackContextBudget`). Items are packed greedily; items exceeding headroom are truncated or safely dropped.
-7. **Visibility**: The panel presents an interactive **Context used** block displaying total budget utilization (`Context: <N> items, <used> of <budget> estimated tokens`), individual item paths, estimated token weights, and selection rationales.
+Agent mode automatically gathers workspace context using a multi-stage retrieval pipeline:
+- **Retrieval pipeline**:
+  1. *Explicit mentions*: `@file:path` and `@symbol:name` mentions in the user prompt are parsed first and given top priority (capped at 40 lines for files, 25 signatures for symbols).
+  2. *Ranked candidate shortlist*: Keywords extracted from the prompt are queried across the workspace using ripgrep. Matches are ranked by keyword frequency, inverse document frequency weight (`keywordWeight(df, N) = clamp(ln((N+1)/(df+1)) / ln(N+1) * 2, 0.15, 1.5)`), symbol definitions, and downstream module importers. Snippets from the same file are merged into non-overlapping windows before token budgeting, with dense windows capped at 40 lines.
+  3. *Repo map*: A compact directory tree overview budgeted to at most 20% of the total context budget.
+  4. *Cross-request cache*: `WorkspaceCache` validates file lists and file contents against disk `mtimeMs` and `size`, with automatic invalidation on file-change events and applied diffs.
+  5. *Secret-file exclusion*: Sensitive paths are excluded from file lists, searches, and candidate windows.
+- **Budgets and packing**: Context is budgeted against a default limit of `2000` tokens (`forge.contextBudget`), estimated at ~4 characters per token (`CHARS_PER_TOKEN = 4`). Fallback sessions use `1500` tokens (`forge.fallbackContextBudget`). For complex multi-file or test requests, `computeAdaptiveBudget` dynamically adds up to 1000 tokens of headroom (capped at 4000). Read-only tool exploration is bounded by `forge.explorationBudget` (default 12 calls). Items are packed greedily by priority; items exceeding remaining headroom are line-truncated or safely dropped.
+- **Context used block**: The panel renders an interactive **Context used** block displaying budget utilization (`Context: <N> items, <used> of <budget> estimated tokens`), individual item paths, estimated token counts, and selection rationales.
 
 ## 5. Model setup
 
 - **Configured models**:
-  - Primary agent (`forge-agent`): NVIDIA NIM `nvidia/nemotron-3.5-lightning-30b-a3b` (manifest: `forge-nvidia/nemotron-3-5-lightning-30b-a3b`), temperature 0.2, serialized tool calls (`parallel_tool_calls: false`), `max_tokens: 8000`, context compaction trigger `40000`.
-  - Inline edit agent (`forge-inline`): NVIDIA NIM `nvidia/nemotron-3.5-lightning-30b-a3b` (manifest: `forge-nvidia/nemotron-3-5-lightning-30b-a3b`), temperature 0.2.
-  - Fallback agent (`forge-agent-fallback`): Google Gemini `google-gemini/gemini-3-8-flash` (manifest: `google-gemini/gemini-3-8-flash`), temperature 0.2, serialized tool calls (`parallel_tool_calls: false`), `max_tokens: 8000`, context compaction trigger `30000`.
-- **Where they run**: Primary and inline models execute on NVIDIA NIM cloud APIs (`forge-nvidia/nemotron-3-5-lightning-30b-a3b`). Fallback model executes on Google Gemini cloud APIs (`google-gemini/gemini-3-8-flash`). TrueForge (`http://localhost:8790`) runs locally. (The Groq adapter `scripts/groq-adapter.cjs` is optional and not run on the default path).
-- **Cost**: Google Gemini and NVIDIA NIM free tiers, approximately INR 0.
-- **Model switching**: Users can switch models directly via `node scripts/configure-provider.cjs` or in TrueForge settings and agent manifests. The setup script configures any OpenAI-compatible provider and updates target agents.
-- **Fallback behavior and circuit breaker**: The resilience controller intercepts permanent errors (HTTP 401, 403, 413) and immediately switches to `forge-agent-fallback` in a fresh session on the second provider (Google Gemini) without retry delay. Transient errors (HTTP 429, 500, 502, 503, network disconnects) retry with exponential backoff up to 12s, capped at 30s total fallback wait before switching.
-  - **Circuit breaker & model health**: When an agent fails due to a connection error, timeout, 401/403, 413, or 5xx, it is marked unhealthy for 5 minutes in memory. Similarly, models reporting 503 "high demand" overload or connection resets are marked unhealthy for 5 minutes and limited to at most one quick retry (<=2s) before advancing through the ordered fallback list (`forge.fallbackModels`). New requests route directly to healthy models without re-attempting failed models.
-  - **Per-request watchdog & failover budget**: A stream watchdog aborts stalled turns via `sessions.cancel` if no first token arrives within `forge.firstTokenTimeoutMs` (default 25s) or no stream event arrives within `forge.stallTimeoutMs` (default 20s), clearing review state and terminating active commands. Total failover time across attempts is strictly bounded by `forge.failoverBudgetMs` (default 45s), leaving the workspace clean if exceeded.
-  - **Session handoff on failover**: When the primary fails mid-request, `HandoffTracker` captures completed read-only tool calls (`read_file`, `list_dir`, `search_workspace`, `search_symbols`, `find_references`, `get_diagnostics`), extracted file outlines, search hits, assembled context, and any unapplied diffs. It injects a compact continuation brief (bounded to `forge.fallbackContextBudget`, default 1200 tokens) into the fallback session's initial turn, instructing the model to continue directly without repeating completed exploration. Secret files are strictly excluded, and the replay guard blocks fallback once any write or command has been approved.
-  - **Exploration bounds (ITEM 4)**: Agent instructions explicitly mandate: after at most 4 reads or 3 searches the agent must list its target files and call `propose_write` for each; never repeat an equivalent search. A per-turn tool-call counter issues a gentle reminder notice after 8 read-only calls (`read_file`, `search_workspace`, `list_dir`) without hard-stopping the run.
-  - **Fault injection & testing**: The extension supports deterministic fault simulation via `forge.faultInjection` (`"none"`, `"auth"`, `"network"`, `"server"`, `"timeout"`) enabling verification of Task C without invalidating production API keys.
-  - **Replay guard**: To prevent duplicate side effects, automatic retry and fallback are disabled once a tool approval has been granted.
-- **Benchmark Results (Flask 3.1.3 commit 22d9247)**:
-  - Task A: Inline edit `get_debug_flag` passed in 1 turn, 6.8s (~1,120 in / ~310 out tokens) using `propose_write`.
-  - Task B: Agent mode `flask config` CLI passed in 2 turns, 22.4s (~3,480 in / ~1,340 out tokens) using `propose_changes` and `run_tests`.
-  - Task C: Primary authentication failure verified via circuit breaker, failing over to Gemini fallback in 1 turn, 3.2s (versus 2 turns and 18.5s without handoff brief, a 50% turn reduction and 5.8x speedup). Unreachable endpoints fail fast in ~3.5s with watchdog cancellation, preventing prior ~9.5 minute hangs.
-  - Baseline comparison: 50-75% reduction in model turns and 3.6-3.8x faster latency across all tasks.
-  - Automated test coverage: 310 passing tests across 35 test suites.
+  - Primary agent (`forge-agent`): NVIDIA NIM `forge-nvidia/nemotron-3-5-lightning-30b-a3b` (`nvidia/nemotron-3.5-lightning-30b-a3b`), cloud API, temperature 0.2, parallel tool calls true, max tokens 8000, compaction trigger 40000.
+  - Inline agent (`forge-inline`): NVIDIA NIM `forge-nvidia/nemotron-3-5-lightning-30b-a3b`, cloud API, temperature 0.2, compaction trigger 5500.
+  - Fallback agent (`forge-agent-fallback`): Google Gemini `google-gemini/gemini-3-8-flash`, cloud API, temperature 0.2, parallel tool calls true, max tokens 8000, compaction trigger 30000.
+- **Where they run and cost**: Primary and inline models execute on NVIDIA NIM cloud APIs (`https://integrate.api.nvidia.com/v1`). The fallback model executes on Google Gemini cloud APIs. TrueForge (`http://localhost:8790`) runs locally. Both run on free tiers (approximately INR 0 within free allowances).
+- **Model switching**: Providers and models can be configured via `node scripts/configure-provider.cjs` or in TrueForge settings. When synchronizing agent manifests, deprecated Gemini model identifiers (`gemini-2.5-flash`) are migrated to `google-gemini/gemini-3-8-flash`, while custom opt-in fallback models are preserved.
+- **Fallback behavior**:
+  - *Permanent errors*: Status 400, 401, 403, 404, 413, 422, unprocessable entity, or unconfigured model errors are classified as permanent (`isPermanentError() = true`). They are never retried and switch immediately to the fallback target.
+  - *Transient errors*: Status 429, 500, 502, 503, and network disconnects retry with exponential backoff up to a 12s cap, limited to 2 retries per target.
+  - *Circuit breaker*: When an agent encounters a connection failure, timeout, 401/403, 413, or 5xx, it is marked unhealthy for 5 minutes in memory, routing subsequent requests directly to fallback without attempting the primary.
+  - *Watchdog and budgets*: Monitored by `forge.firstTokenTimeoutMs` (45s), `forge.stallTimeoutMs` (75s), and `forge.failoverBudgetMs` (120s). Failover budget deduction starts when failover begins and excludes user approval wait time.
+  - *Handoff brief and replay guard*: On fallback, a continuation brief containing read files, searches, and unapplied diffs (bounded by `forge.fallbackContextBudget`, 1500 tokens) is passed to the fallback session. To prevent duplicate mutations, retry and fallback are disabled once an approval has been granted. Reaching the 60-step iteration limit stops without triggering fallback.
+- **Evidence**: All claims are verifiable via 347 automated tests passing across 40 test files (`npm test`), independent verification script `python scripts/verify-flask-demo.py` (verifying Task A inline edits and Task B CLI command on Flask 3.1.3), deterministic fault injection (`forge.faultInjection`: `"none"`, `"auth"`, `"network"`, `"server"`, `"timeout"`), and dated live run logs in `docs/` (`docs/live-A-exact-edits.json`, `docs/live-B-verified.json`, `docs/live-C-official-recheck.json`).
 
 ## 6. Scorecard
 
-| Criterion | Video timestamp | One-line claim |
+| Criterion | Video time | One-line claim |
 |---|---|---|
-| A1 Inline edit | [TODO: mm:ss] | Scoped reviewed inline edit with per-hunk diff review and independent verification. |
-| A2 Agent mode | [TODO: mm:ss] | Multi-file autonomous discovery, ranked context, and tested proposals without file hints. |
-| A3 Streaming and cancellation | [TODO: mm:ss] | Responsive UI streaming, immediate Stop cancellation, and clean workspace preservation. |
-| B1 Context assembly | [TODO: mm:ss] | Ranked keyword and importer retrieval packed within a deterministic token budget. |
-| B2 Diff safety | [TODO: mm:ss] | Immutable diff assembly, single-use approval tokens, and multi-step undo. |
-| B3 Resilience | [TODO: mm:ss] | Fail-fast permanent error detection, bounded backoff, and clean fallback sessions on an independent second provider (Google Gemini). |
-| B4 TrueForge integration depth | [TODO: mm:ss] | TrueForge sessions and turns, loopback MCP tools, visible lifecycle events, and approval resumes. |
-| C1 Video | [TODO: mm:ss] | Four-minute demo demonstrating Tasks A, B, and C in order with TrueForge session visibility. |
-| C2 Write-up | [TODO: mm:ss] | Structured technical write-up covering architecture, context assembly, model setup, scorecard, and limitations. |
+| A1 Inline edit | [00:15] | Scoped inline edit on get_debug_flag with diff review, verified by test script. |
+| A2 Agent mode | [01:20] | Multi-file discovery and atomic propose_changes for flask config without file hints. |
+| A3 Streaming and cancellation | [02:30] | Streamed deltas, responsive panel timeline, and clean stop cancellation. |
+| B1 Context assembly | [00:45] | Ranked keyword and importer retrieval packed within deterministic token budgets. |
+| B2 Diff safety | [01:50] | Single-use approval tokens, base-hash stale guards, and multi-step undo. |
+| B3 Resilience | [03:00] | Fast failover on permanent errors, 5-minute circuit breaker, and handoff brief. |
+| B4 TrueForge integration depth | [02:10] | TrueForge sessions and turns, loopback MCP tools, and visible lifecycle events. |
+| C1 Video and C2 Write-up | [03:45] | Complete demo covering Tasks A-C and concise technical submission write-up. |
 
 ## 7. Tools used
 
-TrueForge 0.182.0, `@truefoundry/trueforge-sdk` 0.182.0, VS Code Extension API 1.90.0, `@modelcontextprotocol/sdk` 1.32.2, `@vscode/ripgrep` 1.18.0, `diff` 9.0.0, `zod` 4.6.7, TypeScript 7.0.2, esbuild 0.28.2, Vitest 5.0.5 (310 tests passing across 35 suites), Node.js 22.14+, Git, ReportLab. AI tools: GitHub Copilot, ChatGPT, and [TODO: confirm all AI tools].
+TrueForge 0.182.0, `@truefoundry/trueforge-sdk` 0.182.0, VS Code Extension API 1.90.0, `@modelcontextprotocol/sdk` 1.32.2, `@vscode/ripgrep` 1.18.0, `diff` 9.0.0, `three` 0.187.0, `zod` 4.6.7, TypeScript 7.0.2, esbuild 0.28.2, Vitest 5.0.5 (347 tests passing across 40 test files), Node.js 22.14+, Git, ReportLab. AI tools: GitHub Copilot, ChatGPT and Claude (Anthropic).
 
 ## 8. Known limitations and what we would do with another month
 
-- **Known limitations**: `run_command` executes with host user permissions and is not an OS sandbox; approved command side-effects cannot be rolled back automatically. The custom undo stack persists up to 50 operations in workspaceState across extension reloads, but will refuse to overwrite files if subsequent external manual edits were made. Primary and fallback operate on independent providers (NVIDIA NIM and Google Gemini), but both remain subject to their respective free-tier rate limits and quotas (about 40 requests per minute on NVIDIA NIM, about 5 requests per minute on Google Gemini). Automatic retry stops after an approval is granted to prevent duplicate side effects. Context size uses a character-based heuristic (~4 chars/token). Dynamic subagents are enabled, but spawning depends on model execution.
+- **Known limitations**: `run_command` executes with host user permissions and is not an OS sandbox; approved command side-effects cannot be rolled back automatically. The custom undo stack persists up to 50 operations in memory across reloads, but will refuse to overwrite files if subsequent external edits occurred. Primary (NVIDIA NIM) and fallback (Google Gemini) operate on independent providers, but both are subject to free-tier rate limits and quotas. Task B multi-file exploration can take minutes and approach the 60-step iteration limit on large repositories. Tool execution depends on model capability to emit valid JSON tool calls. The extension processes one request at a time per workspace, applies line-based diffs, and relies on a character-based token estimate (~4 chars/token).
 - **With another month**: Containerized command execution inside ephemeral Docker or WebAssembly sandboxes; persistent disk-backed undo journals surviving editor restarts; semantic AST and vector embedding retrieval alongside ripgrep; interactive in-diff adjustments during hunk review; and dynamic multi-provider latency-routed fallback pools.

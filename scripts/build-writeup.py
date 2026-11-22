@@ -38,7 +38,8 @@ for i, section in enumerate(sections, 1):
                 if all(re.fullmatch(r'[: -]+', s) for s in values):
                     continue
                 rows.append([Paragraph(clean(v), cell) for v in values])
-            table = Table(rows, colWidths=[117, 36, 65, 277], repeatRows=1, hAlign='LEFT')
+            col_widths = [105, 65, 325] if rows and len(rows[0]) == 3 else [117, 36, 65, 277]
+            table = Table(rows, colWidths=col_widths, repeatRows=1, hAlign='LEFT')
             table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#E9F1F5')),('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),4),('RIGHTPADDING',(0,0),(-1,-1),4),('TOPPADDING',(0,0),(-1,-1),4),('BOTTOMPADDING',(0,0),(-1,-1),4),('LINEBELOW',(0,0),(-1,0),0.7,navy),('LINEBELOW',(0,1),(-1,-1),0.3,colors.HexColor('#D7E0E5'))]))
             story.extend([table, Spacer(1,5)])
         elif block.startswith('- '):
