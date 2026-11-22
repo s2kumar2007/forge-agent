@@ -71,6 +71,7 @@
             "type": "string"
           },
           "default": [
+            "forge-fallback/mistral-large-4-1t-a52b",
             "google-gemini/gemini-3-8-flash"
           ],
           "description": "Ordered list of fallback models to try when the primary model fails or is overloaded."
@@ -83,13 +84,13 @@
         },
         "forge.stallTimeoutMs": {
           "type": "number",
-          "default": 20000,
+          "default": 75000,
           "minimum": 1000,
           "description": "Timeout in milliseconds without any stream events before cancelling and failing over."
         },
         "forge.failoverBudgetMs": {
           "type": "number",
-          "default": 45000,
+          "default": 120000,
           "minimum": 5000,
           "description": "Total failover time budget in milliseconds across all retries and model switches."
         },

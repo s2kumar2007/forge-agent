@@ -269,7 +269,7 @@ export class AgentController {
         fallbacks: chosenFallbacks,
         retries: this.d.retries ?? 2,
         backoffMs: this.d.backoffMs ?? 1000,
-        failoverBudgetMs: this.d.failoverBudgetMs ?? 45_000,
+        failoverBudgetMs: this.d.failoverBudgetMs ?? 120_000,
         now: this.now,
         sleep: this.d.sleep ?? ((ms) => sleepForRetry(ms, this.abort.signal)),
         isCancelled: () => this.cancelled,
@@ -552,7 +552,7 @@ export class AgentController {
         },
       }, this.abort.signal, {
         firstTokenTimeoutMs: this.d.firstTokenTimeoutMs ?? 45000,
-        stallTimeoutMs: this.d.stallTimeoutMs ?? 20000,
+        stallTimeoutMs: this.d.stallTimeoutMs ?? 75000,
         onStall: async () => {
           try { await client.sessions.cancel(sid!, {}); } catch {}
           this.d.approvals.cancelAll();
