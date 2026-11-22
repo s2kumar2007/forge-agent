@@ -51,6 +51,25 @@ describe('TrueForge wire contract', () => {
     expect(update.body.manifest.model.name).toBe('forge-fallback/gemini-2.5-flash');
     expect(update.body.manifest.instructions).toBe(fallback[0]!.manifest.instructions);
   });
+  it('migrates exact deprecated google-gemini/gemini-2-5-flash to gemini-3-8-flash but preserves other provider models', async () => {
+    const requests: { url: string; method: string; body: any }[] = [];
+    const configured = {
+      id: 'agent-id',
+      name: 'forge-agent',
+      description: 'Primary agent',
+      manifest: { model: { name: 'google-gemini/gemini-2-5-flash', params: { temperature: 0.2 } } },
+    };
+    const client = new TrueForge({ baseUrl: 'http://contract.test', fetch: async (url, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      requests.push({ url: String(url), method: init?.method ?? 'GET', body });
+      if (init?.method === 'GET') return Response.json({ data: [configured], pagination: {} });
+      return Response.json({ data: configured });
+    }});
+    const agents = (await loadAgentFiles('agents')).filter((agent) => agent.name === 'forge-agent');
+    expect((await syncAgents(client, agents))[0]?.ok).toBe(true);
+    const update = requests.find((request) => request.method === 'PUT')!;
+    expect(update.body.manifest.model.name).toBe('google-gemini/gemini-3-8-flash');
+  });
   it('keeps approvals after terminal done and uses approval owner thread and source event', async () => {
     const message = toolMsg('source', 'call', 'propose_write', { path: 'a', new_content: 'b' });
     const pending = { ...approvalRequired('call', 'source'), threadId: 'child-thread' };
