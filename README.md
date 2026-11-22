@@ -22,20 +22,34 @@ Written from scratch for Round 1 of the Techfest 2026-27 TrueFoundry Forge-a-tho
 
 ## Architecture summary
 
-The extension integrates VS Code with the TrueForge agent framework through an asynchronous client-server architecture:
+```mermaid
+flowchart LR
+    subgraph Editor["VS Code"]
+        Developer(["Developer"])
+        UI["Webview Chat Panel<br/>Inline Edit"]
+        Controller["Forge Agent Controller"]
+        Review["Hunk Review<br/>Undo Engine"]
+        MCP["Loopback MCP Server<br/>forge-editor"]
+        Workspace["Workspace<br/>Filesystem and tools"]
+    end
 
-```
-[Developer / VS Code] <---> [Webview Chat Panel / Inline Edit]
-                                     |
-                         [Forge Agent Controller]
-                         /          |           \
-           [Circuit Breaker]  [Hunk Review & Undo]  [Loopback MCP: forge-editor]
-                  |                 |                      |
-      [TrueForge Server] <----------+            [Workspace FS / Tools]
-        (sessions/turns)                          (ripgrep, symbols, diags)
-         /             \
- [Primary Model]   [Fallback Model]
-  (NVIDIA NIM)      (Google Gemini)
+    subgraph Agent["TrueForge"]
+        Server["TrueForge Server<br/>Sessions and turns"]
+        Breaker["Circuit Breaker<br/>Fallback Manager"]
+        Primary["Primary model<br/>NVIDIA NIM Nemotron-3.5"]
+        Fallback["Fallback model<br/>Google Gemini 3.8 Flash"]
+    end
+
+    Developer <--> UI
+    UI <--> Controller
+    Controller <--> Review
+    Controller <--> MCP
+    MCP <--> Workspace
+    Controller <--> Server
+    Controller <--> Breaker
+    Breaker <--> Server
+    Server <--> Primary
+    Server -. fallback .-> Fallback
 ```
 
 - **TrueForge client**: Connects to the local TrueForge daemon (`@truefoundry/trueforge-sdk` 0.182.0) over HTTP/SSE (`http://localhost:8790`). The extension creates sessions (`sessions.create`), streams turns (`createTurnStream`), and sends tool approval decisions in resume turns via `user.tool_approval` messages.
