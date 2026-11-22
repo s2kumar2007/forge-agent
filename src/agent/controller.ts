@@ -312,10 +312,16 @@ export class AgentController {
           const attemptNum = Math.max(1, this.attemptCount);
           if (isConfigError(err)) {
             ui.notice(configHint(failedModel));
+            ui.notice(`Primary model failed, using fallback: ${nextModel}`);
+          } else if (isStallError(err)) {
+            const rawMsg = err instanceof Error ? err.message : String(err);
+            const timeoutMatch = /(\d+)ms/.exec(rawMsg);
+            const timeoutSec = timeoutMatch ? Math.round(parseInt(timeoutMatch[1]!, 10) / 1000) : 45;
+            ui.notice(`Model "${failedModel}" sent nothing for ${timeoutSec}s, switching to fallback.`);
           } else {
             ui.notice(`Attempt ${attemptNum} to "${failedModel}" failed (${reason})`);
+            ui.notice(`Primary model failed, using fallback: ${nextModel}`);
           }
-          ui.notice(`Primary model failed, using fallback: ${nextModel}`);
           const filesCount = this.handoffTracker.getUniqueFilesCount();
           const reusingStr = filesCount > 0 ? ` (reusing ${filesCount} files already read)` : '';
           ui.notice(`Primary unavailable, continuing on fallback${reusingStr}`);

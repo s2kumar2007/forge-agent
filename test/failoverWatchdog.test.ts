@@ -71,6 +71,7 @@ describe('watchdog, failover budget, and model health', () => {
     // Verify sessions.cancel was called for the stalled session
     expect(tf.cancels).toContain('s1');
     expect(onCancelCalled).toBe(true);
+    expect(ui.notices.some((n) => n.includes('sent nothing for') && n.includes('switching to fallback'))).toBe(true);
     expect(gitStatus()).toBe('');
   });
 
