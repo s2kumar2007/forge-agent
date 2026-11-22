@@ -485,7 +485,7 @@ export class AgentController {
           ui.toolCall(n);
         },
       }, this.abort.signal, {
-        firstTokenTimeoutMs: this.d.firstTokenTimeoutMs ?? 25000,
+        firstTokenTimeoutMs: this.d.firstTokenTimeoutMs ?? 45000,
         stallTimeoutMs: this.d.stallTimeoutMs ?? 20000,
         onStall: async () => {
           try { await client.sessions.cancel(sid!, {}); } catch {}

@@ -9,7 +9,7 @@ export function getConfig() {
     fallbackAgentName: c.get<string>('fallbackAgentName', 'forge-agent-fallback'),
     fallbackModel: c.get<string>('fallbackModel', 'google-gemini/gemini-3-8-flash'),
     fallbackModels: c.get<string[]>('fallbackModels', [c.get<string>('fallbackModel', 'google-gemini/gemini-3-8-flash')]),
-    firstTokenTimeoutMs: Math.max(1000, c.get<number>('firstTokenTimeoutMs', 25000)),
+    firstTokenTimeoutMs: Math.max(1000, c.get<number>('firstTokenTimeoutMs', 45000)),
     stallTimeoutMs: Math.max(1000, c.get<number>('stallTimeoutMs', 20000)),
     failoverBudgetMs: Math.max(5000, c.get<number>('failoverBudgetMs', 45000)),
     contextBudget: Math.max(500, c.get<number>('contextBudget', 2000)),

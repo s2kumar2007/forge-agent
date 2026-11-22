@@ -1,10 +1,11 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { runWithFallback, ForgeFailure, isOverloadedError, isStallError, type FallbackTarget } from '../src/agent/resilience';
 import { AgentController, ModelHealthTracker } from '../src/agent/controller';
 import { ReviewApprovals } from '../src/review/approvals';
 import { DecisionStore } from '../src/review/decisions';
 import { FakeTrueForge, RecordingUi, created, delta, done, toolMsg, approvalRequired } from './fakes';
 import { tempRepo } from './helpers';
+import { runTurn } from '../src/forge/turnRunner';
 
 describe('watchdog, failover budget, and model health', () => {
   it('classifies 503 "high demand", UNAVAILABLE, and ECONNRESET as overloaded', () => {
@@ -279,5 +280,186 @@ describe('watchdog, failover budget, and model health', () => {
     expect(attemptsLogged.some((l) => /\[forge\] Attempt 3: session=s3 agent=forge-fallback model=test-fallback-model/.test(l))).toBe(true);
     expect(attemptsLogged.some((l) => /\[forge\] Attempt 3 result: agent=forge-fallback model=test-fallback-model outcome=done/.test(l))).toBe(true);
     expect(ui.notices.some((n) => n.includes('Primary unavailable, continuing on fallback (reusing 1 files already read)'))).toBe(true);
+  });
+
+  describe('watchdog fake clock timers (STEP 1)', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const createControllableStream = (abortSignal?: AbortSignal) => {
+      const queue: any[] = [];
+      let waitingResolve: (() => void) | undefined;
+      let closed = false;
+
+      if (abortSignal) {
+        abortSignal.addEventListener('abort', () => {
+          closed = true;
+          if (waitingResolve) {
+            const r = waitingResolve;
+            waitingResolve = undefined;
+            r();
+          }
+        });
+      }
+
+      const push = (ev: any) => {
+        queue.push(ev);
+        if (waitingResolve) {
+          const r = waitingResolve;
+          waitingResolve = undefined;
+          r();
+        }
+      };
+
+      const close = () => {
+        closed = true;
+        if (waitingResolve) {
+          const r = waitingResolve;
+          waitingResolve = undefined;
+          r();
+        }
+      };
+
+      const stream = {
+        async *[Symbol.asyncIterator]() {
+          while (true) {
+            while (queue.length === 0 && !closed && !abortSignal?.aborted) {
+              await new Promise<void>((res) => {
+                waitingResolve = res;
+              });
+            }
+            if (queue.length > 0) {
+              yield { data: queue.shift() };
+            } else if (closed || abortSignal?.aborted) {
+              if (abortSignal?.aborted) {
+                throw new Error('AbortError');
+              }
+              break;
+            }
+          }
+        },
+        withMetadata() {
+          return this;
+        },
+      };
+
+      return { push, close, stream };
+    };
+
+    it('no event for 30s with firstTokenTimeoutMs=45000 does NOT trigger, then at 46s triggers First token timeout', async () => {
+      vi.useFakeTimers();
+      let streamCtrl: any;
+      const fakeClient = {
+        sessions: {
+          createTurnStream: async (_id: string, _opts: any, reqOpts: any) => {
+            streamCtrl = createControllableStream(reqOpts?.abortSignal);
+            return streamCtrl.stream;
+          },
+        },
+      } as any;
+
+      let caughtError: Error | undefined;
+      const turnPromise = runTurn(
+        fakeClient,
+        's1',
+        [],
+        { onTextDelta: () => {}, onToolCall: () => {} },
+        undefined,
+        { firstTokenTimeoutMs: 45000, stallTimeoutMs: 20000 }
+      ).catch((e) => {
+        caughtError = e;
+      });
+
+      // After 30s: does NOT trigger
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(caughtError).toBeUndefined();
+
+      // At 46s (16s more): triggers "First token timeout"
+      await vi.advanceTimersByTimeAsync(16000);
+      await turnPromise;
+      expect(caughtError).toBeDefined();
+      expect(caughtError?.message).toContain('First token timeout: no response within 45000ms');
+    });
+
+    it('an event at 5s followed by 21s of silence triggers Stall timeout', async () => {
+      vi.useFakeTimers();
+      let streamCtrl: any;
+      const fakeClient = {
+        sessions: {
+          createTurnStream: async (_id: string, _opts: any, reqOpts: any) => {
+            streamCtrl = createControllableStream(reqOpts?.abortSignal);
+            return streamCtrl.stream;
+          },
+        },
+      } as any;
+
+      let caughtError: Error | undefined;
+      const turnPromise = runTurn(
+        fakeClient,
+        's1',
+        [],
+        { onTextDelta: () => {}, onToolCall: () => {} },
+        undefined,
+        { firstTokenTimeoutMs: 45000, stallTimeoutMs: 20000 }
+      ).catch((e) => {
+        caughtError = e;
+      });
+
+      // Advance to 5s and send event
+      await vi.advanceTimersByTimeAsync(5000);
+      streamCtrl.push({ type: 'turn.created', id: 't1' });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(caughtError).toBeUndefined();
+
+      // Silence for 21s (stallTimeout is 20s): triggers "Stall timeout"
+      await vi.advanceTimersByTimeAsync(21000);
+      await turnPromise;
+      expect(caughtError).toBeDefined();
+      expect(caughtError?.message).toContain('Stall timeout: no stream event for 20000ms');
+    });
+
+    it('steady events never trigger any timeout', async () => {
+      vi.useFakeTimers();
+      let streamCtrl: any;
+      const fakeClient = {
+        sessions: {
+          createTurnStream: async (_id: string, _opts: any, reqOpts: any) => {
+            streamCtrl = createControllableStream(reqOpts?.abortSignal);
+            return streamCtrl.stream;
+          },
+        },
+      } as any;
+
+      let caughtError: Error | undefined;
+      const turnPromise = runTurn(
+        fakeClient,
+        's1',
+        [],
+        { onTextDelta: () => {}, onToolCall: () => {} },
+        undefined,
+        { firstTokenTimeoutMs: 45000, stallTimeoutMs: 20000 }
+      ).catch((e) => {
+        caughtError = e;
+      });
+
+      // Send event at 5s
+      await vi.advanceTimersByTimeAsync(5000);
+      streamCtrl.push({ type: 'turn.created', id: 't1' });
+
+      // Send another event every 10s up to 60s
+      for (let i = 0; i < 5; i++) {
+        await vi.advanceTimersByTimeAsync(10000);
+        streamCtrl.push({ type: 'model.message', id: `m${i}`, threadId: 'main', content: 'chunk' });
+      }
+
+      await vi.advanceTimersByTimeAsync(5000);
+      streamCtrl.push({ type: 'turn.done', id: 'td1', state: { status: 'done' } });
+      streamCtrl.close();
+
+      const result = await turnPromise;
+      expect(caughtError).toBeUndefined();
+      expect(result?.status).toBe('done');
+    });
   });
 });

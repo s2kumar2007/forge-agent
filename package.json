@@ -73,7 +73,7 @@
         },
         "forge.firstTokenTimeoutMs": {
           "type": "number",
-          "default": 25000,
+          "default": 45000,
           "minimum": 1000,
           "description": "Timeout in milliseconds waiting for the first token before cancelling and failing over."
         },

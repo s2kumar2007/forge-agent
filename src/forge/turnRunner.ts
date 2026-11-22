@@ -95,20 +95,16 @@ export async function runTurn(
     }
   };
 
-  armStallTimer();
-
   try {
     const stream = await client.sessions.createTurnStream(sessionId, { input }, { abortSignal: effectiveSignal, maxRetries: 0, timeoutInSeconds: 600 });
 
     for await (const { data: event } of stream.withMetadata()) {
       if (watchdogTriggered) break;
-      armStallTimer();
       if (firstTokenTimer) {
-        if (event.type === 'model.message' || isEventDelta(event) || ('content' in event && (event as any).content) || ('toolCalls' in event && Array.isArray((event as any).toolCalls) && (event as any).toolCalls.length > 0)) {
-          clearTimeout(firstTokenTimer);
-          firstTokenTimer = undefined;
-        }
+        clearTimeout(firstTokenTimer);
+        firstTokenTimer = undefined;
       }
+      armStallTimer();
       if (!event || typeof event !== 'object' || typeof event.type !== 'string' || typeof event.id !== 'string') throw new Error('TrueForge sent an invalid event.');
     if (isEventDelta(event)) {
       let base = events.get(event.id);
