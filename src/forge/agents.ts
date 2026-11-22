@@ -21,6 +21,18 @@ export async function loadAgentFiles(dir: string): Promise<AgentFile[]> {
  */
 export async function syncAgents(client: TrueForge, agents: AgentFile[]): Promise<{ name: string; ok: boolean; error?: string }[]> {
   const results: { name: string; ok: boolean; error?: string }[] = [];
+  let availableModels: string[] | undefined;
+  const getAvailableModels = async (): Promise<string[]> => {
+    if (availableModels) return availableModels;
+    try {
+      const res = await (client as any).models?.list?.();
+      availableModels = res?.data?.map((m: any) => m.name).filter(Boolean) ?? [];
+    } catch {
+      availableModels = [];
+    }
+    return availableModels ?? [];
+  };
+
   for (const a of agents) {
     let lastError: unknown;
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -28,12 +40,45 @@ export async function syncAgents(client: TrueForge, agents: AgentFile[]): Promis
         const existing = await findAgent(client, a.name);
         if (existing) {
           const configuredModel = existing.manifest?.model?.name;
-          const manifest = configuredModel && (configuredModel.startsWith('forge-nvidia/') || configuredModel.startsWith('forge-fallback/'))
+          let manifest = configuredModel
             ? { ...a.manifest, model: { ...a.manifest.model, name: configuredModel } }
             : a.manifest;
-          await client.agents.update(existing.id, { description: a.description, manifest });
+          try {
+            await client.agents.update(existing.id, { description: a.description, manifest });
+          } catch (updateErr: any) {
+            const isUnknownModel = updateErr?.status === 422 || /unknown model|provider not configured|unprocessable/i.test(updateErr?.message ?? '');
+            if (isUnknownModel) {
+              const models = await getAvailableModels();
+              const fallbackModel = models.find((m) => m.startsWith('forge-fallback/') || m.startsWith('google-gemini/')) ?? models[0];
+              if (fallbackModel && fallbackModel !== manifest.model?.name) {
+                manifest = { ...a.manifest, model: { ...a.manifest.model, name: fallbackModel } };
+                await client.agents.update(existing.id, { description: a.description, manifest });
+              } else {
+                throw updateErr;
+              }
+            } else {
+              throw updateErr;
+            }
+          }
+        } else {
+          try {
+            await client.agents.create({ name: a.name, description: a.description, manifest: a.manifest });
+          } catch (createErr: any) {
+            const isUnknownModel = createErr?.status === 422 || /unknown model|provider not configured|unprocessable/i.test(createErr?.message ?? '');
+            if (isUnknownModel) {
+              const models = await getAvailableModels();
+              const fallbackModel = models.find((m) => m.startsWith('forge-fallback/') || m.startsWith('google-gemini/')) ?? models[0];
+              if (fallbackModel && fallbackModel !== a.manifest.model?.name) {
+                const manifest = { ...a.manifest, model: { ...a.manifest.model, name: fallbackModel } };
+                await client.agents.create({ name: a.name, description: a.description, manifest });
+              } else {
+                throw createErr;
+              }
+            } else {
+              throw createErr;
+            }
+          }
         }
-        else await client.agents.create({ name: a.name, description: a.description, manifest: a.manifest });
         lastError = undefined;
         break;
       } catch (err) {
