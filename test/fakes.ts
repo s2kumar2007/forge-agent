@@ -64,4 +64,6 @@ export class RecordingUi implements AgentUi {
   sessions: string[] = [];
   eventLine(t: string) { this.events.push(t); }
   session(id: string) { this.sessions.push(id); }
+  diffPreviews: Array<{ path: string; rationale?: string; confidence?: { tag: string; score: number } }> = [];
+  diffPreview(p: { path: string; rationale?: string; confidence?: { tag: string; score: number } }) { this.diffPreviews.push(p); }
 }

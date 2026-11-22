@@ -18,7 +18,7 @@ type ToWebview =
   | { type: 'context'; items: { label: string; reason: string; tokens: number }[]; tokens: number; budget: number }
   | { type: 'suggestions'; items: { insert: string; label: string }[] }
   | { type: 'metrics'; metrics: RunMetrics }
-  | { type: 'diffPreview'; path: string; rationale?: string };
+  | { type: 'diffPreview'; path: string; rationale?: string; confidence?: { tag: string; score: number } };
 
 /** Webview chat. A thin UI over AgentController; all network work is async so the host never blocks. */
 export class ChatPanel {
@@ -63,7 +63,7 @@ export class ChatPanel {
       eventLine: (t) => this.post({ type: 'notice', text: t }),
       session: (id) => this.post({ type: 'session', id }),
       metrics: (metrics) => this.post({ type: 'metrics', metrics }),
-      diffPreview: (preview) => this.post({ type: 'diffPreview', path: preview.path, rationale: preview.rationale }),
+      diffPreview: (preview) => this.post({ type: 'diffPreview', path: preview.path, rationale: preview.rationale, confidence: preview.confidence }),
     };
     try {
       const buildMessage = async (budget: number): Promise<string> => {
@@ -105,17 +105,48 @@ export class ChatPanel {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
 <link rel="stylesheet" href="${css}"></head><body>
 <header id="header">
-  <img class="header-logo" src="${logo}" alt="Forge Agent logo" width="28" height="28">
-  <div class="header-titles">
-    <div class="header-title">Forge Agent</div>
-    <div class="header-subtitle">Agent loop runs on TrueForge</div>
+  <div class="header-left">
+    <img class="header-logo" src="${logo}" alt="Forge Agent logo" width="24" height="24">
+    <div class="header-titles">
+      <div class="header-title">Forge Agent</div>
+    </div>
+  </div>
+  <div class="header-status">
+    <span class="status-dot healthy" id="status-dot"></span>
+    <span id="status-text">forge-nvidia / nemotron-3.5</span>
   </div>
 </header>
+<div id="timeline" class="timeline">
+  <div class="timeline-step" id="step-context">Context</div>
+  <div class="timeline-step" id="step-model">Model</div>
+  <div class="timeline-step" id="step-tools">Tools</div>
+  <div class="timeline-step" id="step-review">Review</div>
+  <div class="timeline-step" id="step-done">Done</div>
+</div>
+<div id="token-bar-container">
+  <div id="token-bar-track">
+    <div id="token-bar-fill"></div>
+  </div>
+  <div id="token-bar-label">0 / 3000 tokens</div>
+</div>
 <div id="log"></div>
 <div id="ac"></div>
-<div id="bar"><textarea id="input" rows="3" placeholder="Ask Forge... (Ctrl+Enter to send)"></textarea>
-<button id="send">Send</button><button id="stop" disabled>Stop</button></div>
-<footer id="footer"><div id="metrics-footer"></div></footer>
+<div id="chips">
+  <button class="chip" data-prompt="Add a new built-in CLI command flask config that prints configuration as JSON, masking secret keys">flask config CLI</button>
+  <button class="chip" data-prompt="Refactor get_debug_flag in src/flask/helpers.py to support off and n">inline get_debug_flag</button>
+  <button class="chip" data-prompt="Run test suite and fix any failing tests">run tests</button>
+  <button class="chip" data-prompt="Get compiler and linter diagnostics for workspace">diagnostics</button>
+</div>
+<div id="bar">
+  <textarea id="input" rows="3" placeholder="Ask Forge... (Ctrl+Enter to send, @ to mention files)"></textarea>
+  <div id="bar-buttons">
+    <button id="send">Send</button>
+    <button id="stop" disabled>Stop</button>
+  </div>
+</div>
+<footer id="footer">
+  <div id="metrics-footer">Ready</div>
+</footer>
 <script nonce="${nonce}" src="${js}"></script></body></html>`;
   }
 }

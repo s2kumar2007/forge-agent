@@ -42,6 +42,9 @@ describe('approval loop (propose_write)', () => {
 
     expect(ui.result?.status).toBe('done');
     expect(ui.text).toBe('Planning... Done.');
+    expect(ui.diffPreviews.length).toBe(1);
+    expect(ui.diffPreviews[0]!.path).toBe('f.txt');
+    expect(ui.diffPreviews[0]!.rationale).toBe('r');
     expect(fs.readFileSync(file, 'utf8')).toBe('a\nB\nc\nd\ne\nf\n');
     // first turn: user.message; resume turn: only a user.tool_approval (never mixed)
     expect(tf.inputs[0]![0].type).toBe('user.message');

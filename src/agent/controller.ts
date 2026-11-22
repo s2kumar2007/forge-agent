@@ -3,6 +3,8 @@ import { describeToolCall, runTurn, toolName } from '../forge/turnRunner';
 import type { AgentUi, ApprovalHandler } from './types';
 import { CancelledError, ForgeFailure, IterationLimitError, isIterationLimitError, runWithFallback } from './resilience';
 import { RunMetricsCollector, type RunMetrics } from '../metrics';
+import { computeHunks } from '../review/hunks';
+import { computeChangeConfidence } from '../review/confidence';
 
 function isAuthenticationFailure(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -346,16 +348,32 @@ export class AgentController {
           if (info?.name === 'propose_write' || info?.name === 'propose_changes') {
             hadProposeWrite = true;
             if (info.name === 'propose_write' && typeof info.args.path === 'string') {
+              let conf: { tag: string; score: number } | undefined;
+              try {
+                if (typeof info.args.old_text === 'string' && typeof info.args.new_text === 'string') {
+                  const hunks = computeHunks(info.args.old_text, info.args.new_text);
+                  conf = computeChangeConfidence({ oldText: info.args.old_text, newText: info.args.new_text, hunks, isNew: !info.args.old_text });
+                }
+              } catch {}
               ui.diffPreview?.({
                 path: info.args.path,
                 rationale: typeof info.args.rationale === 'string' ? info.args.rationale : undefined,
+                confidence: conf,
               });
             } else if (info.name === 'propose_changes' && Array.isArray(info.args.changes)) {
               for (const ch of info.args.changes) {
                 if (ch && typeof ch.path === 'string') {
+                  let conf: { tag: string; score: number } | undefined;
+                  try {
+                    if (typeof ch.old_text === 'string' && typeof ch.new_text === 'string') {
+                      const hunks = computeHunks(ch.old_text, ch.new_text);
+                      conf = computeChangeConfidence({ oldText: ch.old_text, newText: ch.new_text, hunks, isNew: !ch.old_text });
+                    }
+                  } catch {}
                   ui.diffPreview?.({
                     path: ch.path,
                     rationale: typeof ch.rationale === 'string' ? ch.rationale : (typeof info.args.rationale === 'string' ? info.args.rationale : undefined),
+                    confidence: conf,
                   });
                 }
               }
