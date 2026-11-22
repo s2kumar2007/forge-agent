@@ -114,7 +114,15 @@ export interface ControllerDeps {
   failoverBudgetMs?: number;
 }
 
+export function isConnectionError(err: unknown): boolean {
+  const raw = err instanceof Error ? err.message : String(err);
+  return /(?:fetch failed|econnrefused|econnreset|enotfound|etimedout|connection refused|connection reset|connection timeout|connect econnrefused|failed to fetch|network\s*error|socket hang up)/i.test(raw);
+}
+
 export function sanitizeReason(err: unknown): string {
+  if (isConnectionError(err)) {
+    return 'could not reach the model';
+  }
   const raw = err instanceof Error ? err.message : String(err);
   let firstLine = raw.split(/[\r\n]+/)[0]?.trim() || 'unknown error';
   firstLine = firstLine
@@ -273,7 +281,8 @@ export class AgentController {
           this.d.logError?.(err);
           const reason = sanitizeReason(err);
           const modelName = target?.model ?? agent;
-          ui.notice(`Attempt ${this.attemptCount}: Request to "${modelName}" failed (${reason}), retrying (${n})...`);
+          const attemptNum = Math.max(1, this.attemptCount);
+          ui.notice(`Attempt ${attemptNum}: Request to "${modelName}" failed (${reason}), retrying (${n})...`);
         },
         onFallback: (err, fromTarget, toTarget) => {
           primaryFailed = true;
@@ -285,7 +294,8 @@ export class AgentController {
             this.primaryUnavailableNoticeShown = false;
           }
           const reason = sanitizeReason(err);
-          ui.notice(`Attempt ${this.attemptCount} to "${failedModel}" failed (${reason})`);
+          const attemptNum = Math.max(1, this.attemptCount);
+          ui.notice(`Attempt ${attemptNum} to "${failedModel}" failed (${reason})`);
           ui.notice(`Primary model failed, using fallback: ${nextModel}`);
           const filesCount = this.handoffTracker.getUniqueFilesCount();
           ui.notice(`Primary unavailable, continuing on fallback (reusing ${filesCount} files already read)`);
@@ -358,6 +368,7 @@ export class AgentController {
     metricsCollector?: RunMetricsCollector,
     primaryAgent?: string,
   ): Promise<'done' | 'cancelled'> {
+    this.attemptCount++;
     this.d.approvals.cancelAll();
     this.sessionId = undefined;
     await this.d.prepare?.();
@@ -390,7 +401,6 @@ export class AgentController {
     this.sessionId = sid;
     ui.session?.(sid);
 
-    this.attemptCount++;
     const attemptLog = `[forge] Attempt ${this.attemptCount}: session=${sid} agent=${agent} model=${model}`;
     this.d.logAttempt?.(attemptLog);
     this.d.logMetrics?.(attemptLog);

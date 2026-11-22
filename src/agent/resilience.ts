@@ -44,6 +44,9 @@ export interface FallbackOptions<T> {
 /** Short, stack-free reason for the one error message the user sees. */
 export function briefReason(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
+  if (/(?:fetch failed|econnrefused|econnreset|enotfound|etimedout|connection refused|connection reset|connection timeout|connect econnrefused|failed to fetch|network\s*error|socket hang up)/i.test(raw)) {
+    return 'could not reach the model';
+  }
   let line = raw.split(/[\r\n]+/)[0]!.trim();
   line = line
     .replace(/\s+at\s+(?:[a-zA-Z0-9_$.<>]+\s+)?\(?(?:node:|[A-Za-z]:[\\/]|(?:\.?[\\/])|\S+\.[a-zA-Z0-9]+:\d+|internal\/).*/g, '')
