@@ -39,14 +39,17 @@ export async function syncAgents(client: TrueForge, agents: AgentFile[]): Promis
       try {
         const existing = await findAgent(client, a.name);
         if (existing) {
-          const configuredModel = existing.manifest?.model?.name;
+          let configuredModel = existing.manifest?.model?.name;
+          if (configuredModel && /gemini-2[-.]5-flash/i.test(configuredModel)) {
+            configuredModel = 'google-gemini/gemini-3-8-flash';
+          }
           let manifest = configuredModel
             ? { ...a.manifest, model: { ...a.manifest.model, name: configuredModel } }
             : a.manifest;
           try {
             await client.agents.update(existing.id, { description: a.description, manifest });
           } catch (updateErr: any) {
-            const isUnknownModel = updateErr?.status === 422 || /unknown model|provider not configured|unprocessable/i.test(updateErr?.message ?? '');
+            const isUnknownModel = updateErr?.status === 422 || updateErr?.status === 404 || /unknown model|provider not configured|unprocessable|no longer available/i.test(updateErr?.message ?? '');
             if (isUnknownModel) {
               const models = await getAvailableModels();
               const fallbackModel = models.find((m) => m.startsWith('forge-fallback/') || m.startsWith('google-gemini/')) ?? models[0];
