@@ -57,20 +57,14 @@ export class CharacterApp {
     this.themeButtons = document.querySelectorAll('.theme-switch .theme-btn');
     this.themeHcNotice = document.getElementById('theme-high-contrast-notice');
 
-    // Determine initial character mode: sessionStorage > config setting (off by default)
-    let initialMode: CharacterMode = 'Off';
+    // Determine initial character mode: sessionStorage > config setting
+    let initialMode: CharacterMode = window.__FORGE_INITIAL_CONFIG__?.guideCharacter3d ? '3D' : 'Off';
     try {
       const saved = sessionStorage.getItem('forge.characterMode');
       if (saved === '3D' || saved === '2D' || saved === 'Off') {
         initialMode = saved;
-      } else if (window.__FORGE_INITIAL_CONFIG__?.guideCharacter3d) {
-        initialMode = '3D';
       }
-    } catch {
-      if (window.__FORGE_INITIAL_CONFIG__?.guideCharacter3d) {
-        initialMode = '3D';
-      }
-    }
+    } catch {}
 
     // Determine initial theme mode: webview state > sessionStorage > setting > 'auto'
     let initialTheme: ForgeThemeMode = 'auto';

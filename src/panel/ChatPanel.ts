@@ -27,7 +27,11 @@ export class ChatPanel {
   private sendAbort = new AbortController();
 
   static show(ctx: vscode.ExtensionContext, controller: AgentController, deps: WorkspaceContextDeps): void {
-    if (ChatPanel.current) { ChatPanel.current.panel.reveal(); return; }
+    if (ChatPanel.current) {
+      ChatPanel.current.panel.webview.html = ChatPanel.current.html(ChatPanel.current.panel.webview);
+      ChatPanel.current.panel.reveal();
+      return;
+    }
     const panel = vscode.window.createWebviewPanel('forgeAgent', 'Forge Agent', vscode.ViewColumn.Beside, {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, 'media')],
@@ -168,17 +172,17 @@ export class ChatPanel {
       <button id="stop" disabled>Stop</button>
     </div>
   </div>
-  <aside id="forge-character-dock" aria-label="Forge Assistant Guide" class="character-dock">
+  <aside id="forge-character-dock" aria-label="Forge Assistant Guide" class="character-dock ${guide3d ? '' : 'collapsed'}">
     <div id="character-speech-bubble" class="character-speech" style="display:none;" aria-hidden="true"></div>
     <div class="character-viewport">
-      <canvas id="forge-character-canvas" width="160" height="160" aria-label="3D Forge character" role="img"></canvas>
+      <canvas id="forge-character-canvas" width="160" height="160" aria-label="3D Forge character" role="img" style="${guide3d ? 'display:block;' : 'display:none;'}"></canvas>
       <div id="forge-character-svg" class="character-2d" style="display:none;" aria-label="2D Forge avatar" role="img"></div>
     </div>
     <div class="character-controls">
       <div class="character-mode-toggle" role="radiogroup" aria-label="Character display mode">
-        <button type="button" class="mode-btn" data-mode="3D" role="radio" aria-checked="false" tabindex="0">3D</button>
+        <button type="button" class="mode-btn ${guide3d ? 'active' : ''}" data-mode="3D" role="radio" aria-checked="${guide3d ? 'true' : 'false'}" tabindex="0">3D</button>
         <button type="button" class="mode-btn" data-mode="2D" role="radio" aria-checked="false" tabindex="0">2D</button>
-        <button type="button" class="mode-btn active" data-mode="Off" role="radio" aria-checked="true" tabindex="0">Off</button>
+        <button type="button" class="mode-btn ${guide3d ? '' : 'active'}" data-mode="Off" role="radio" aria-checked="${guide3d ? 'false' : 'true'}" tabindex="0">Off</button>
       </div>
     </div>
     <div id="character-aria-live" aria-live="polite" class="sr-only">Forge is idle and ready</div>
