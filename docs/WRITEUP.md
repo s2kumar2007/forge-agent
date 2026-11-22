@@ -84,7 +84,7 @@ Agent mode automatically gathers workspace context using a multi-stage retrieval
   - Task B: Agent mode `flask config` CLI passed in 2 turns, 22.4s (~3,480 in / ~1,340 out tokens) using `propose_changes` and `run_tests`.
   - Task C: Primary authentication failure verified via circuit breaker, failing over to Gemini fallback in 1 turn, 3.2s (versus 2 turns and 18.5s without handoff brief, a 50% turn reduction and 5.8x speedup). Unreachable endpoints fail fast in ~3.5s with watchdog cancellation, preventing prior ~9.5 minute hangs.
   - Baseline comparison: 50-75% reduction in model turns and 3.6-3.8x faster latency across all tasks.
-  - Automated test coverage: 287 passing tests across 33 test suites.
+  - Automated test coverage: 310 passing tests across 35 test suites.
 
 ## 6. Scorecard
 
@@ -102,7 +102,7 @@ Agent mode automatically gathers workspace context using a multi-stage retrieval
 
 ## 7. Tools used
 
-TrueForge 0.182.0, `@truefoundry/trueforge-sdk` 0.182.0, VS Code Extension API 1.90.0, `@modelcontextprotocol/sdk` 1.32.2, `@vscode/ripgrep` 1.18.0, `diff` 9.0.0, `zod` 4.6.7, TypeScript 7.0.2, esbuild 0.28.2, Vitest 5.0.5 (287 tests passing across 33 suites), Node.js 22.14+, Git, ReportLab. AI tools: GitHub Copilot, ChatGPT, and [TODO: confirm all AI tools].
+TrueForge 0.182.0, `@truefoundry/trueforge-sdk` 0.182.0, VS Code Extension API 1.90.0, `@modelcontextprotocol/sdk` 1.32.2, `@vscode/ripgrep` 1.18.0, `diff` 9.0.0, `zod` 4.6.7, TypeScript 7.0.2, esbuild 0.28.2, Vitest 5.0.5 (310 tests passing across 35 suites), Node.js 22.14+, Git, ReportLab. AI tools: GitHub Copilot, ChatGPT, and [TODO: confirm all AI tools].
 
 ## 8. Known limitations and what we would do with another month
 

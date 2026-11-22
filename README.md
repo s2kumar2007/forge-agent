@@ -123,7 +123,8 @@ Evaluated against Pallets Flask 3.1.3 (`commit 22d924701a6ae2e4cd01e9a15bbaf3946
 - **Latency**: Task A latency cut from ~24.5s to ~6.8s (3.6x faster); Task B latency cut from ~86.2s to ~22.4s (3.8x faster).
 - **Atomicity**: Task B proposes changes across all 3 files simultaneously in one atomic `propose_changes` call.
 - **Failover speed, handoff & watchdog**: Immediate fail-fast upon authentication errors trips circuit breaker in ~3.2s with zero retries. Fallback session handoff reuses read files, cutting fallback turns from 2 to 1 (50% reduction) and fallback latency from ~18.5s to ~3.2s (5.8x faster). Per-request watchdog (`forge.firstTokenTimeoutMs`, `forge.stallTimeoutMs`) eliminates stall hangs (preventing ~9.5 min stalls), while `forge.failoverBudgetMs` and ordered fallback models (`forge.fallbackModels`) gracefully switch providers when models report 503 "high demand" overload.
-- **Test coverage**: **287 tests passing across 33 test suites** (`npm test`).
+- **Interactive Forge Guide**: Optional docked 3D procedural character (`forge.guide.character3d: false` by default) with 2D SVG fallback, 7 operational states, 30fps cap, WebGL context-loss recovery, frame budget watchdog, and secret redactions.
+- **Test coverage**: **310 tests passing across 35 test suites** (`npm test`).
 
 ## Setup from a clean clone
 

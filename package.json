@@ -105,9 +105,20 @@
         },
         "forge.faultInjection": {
           "type": "string",
-          "enum": ["none", "auth", "network", "server", "timeout"],
+          "enum": [
+            "none",
+            "auth",
+            "network",
+            "server",
+            "timeout"
+          ],
           "default": "none",
           "description": "Simulate primary provider failures to verify automatic fallback without breaking API keys."
+        },
+        "forge.guide.character3d": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show a procedural 3D Forge character beside the Ask Forge strip (falls back to 2D SVG avatar if WebGL is unavailable or slow)."
         }
       }
     },
@@ -132,10 +143,12 @@
     "@truefoundry/trueforge-sdk": "0.182.0",
     "@vscode/ripgrep": "^1.18.0",
     "diff": "^9.0.0",
+    "three": "^0.187.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
+    "@types/three": "^0.187.0",
     "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^4.1.0",
     "esbuild": "^0.28.2",

@@ -99,10 +99,12 @@ export class ChatPanel {
   private html(webview: vscode.Webview): string {
     const nonce = randomBytes(16).toString('hex');
     const js = webview.asWebviewUri(vscode.Uri.joinPath(this.ctx.extensionUri, 'media', 'main.js'));
+    const characterJs = webview.asWebviewUri(vscode.Uri.joinPath(this.ctx.extensionUri, 'media', 'character.js'));
     const css = webview.asWebviewUri(vscode.Uri.joinPath(this.ctx.extensionUri, 'media', 'main.css'));
     const logo = webview.asWebviewUri(vscode.Uri.joinPath(this.ctx.extensionUri, 'media', 'logo.png'));
+    const guide3d = getConfig().guideCharacter3d;
     return `<!doctype html><html><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <link rel="stylesheet" href="${css}"></head><body>
 <header id="header">
   <div class="header-left">
@@ -137,16 +139,37 @@ export class ChatPanel {
   <button class="chip" data-prompt="Run test suite and fix any failing tests">run tests</button>
   <button class="chip" data-prompt="Get compiler and linter diagnostics for workspace">diagnostics</button>
 </div>
-<div id="bar">
-  <textarea id="input" rows="3" placeholder="Ask Forge... (Ctrl+Enter to send, @ to mention files)"></textarea>
-  <div id="bar-buttons">
-    <button id="send">Send</button>
-    <button id="stop" disabled>Stop</button>
+<div id="ask-forge-container">
+  <div id="bar">
+    <textarea id="input" rows="3" placeholder="Ask Forge... (Ctrl+Enter to send, @ to mention files)"></textarea>
+    <div id="bar-buttons">
+      <button id="send">Send</button>
+      <button id="stop" disabled>Stop</button>
+    </div>
   </div>
+  <aside id="forge-character-dock" aria-label="Forge Assistant Guide" class="character-dock">
+    <div id="character-speech-bubble" class="character-speech" style="display:none;" aria-hidden="true"></div>
+    <div class="character-viewport">
+      <canvas id="forge-character-canvas" width="160" height="160" aria-label="3D Forge character" role="img"></canvas>
+      <div id="forge-character-svg" class="character-2d" style="display:none;" aria-label="2D Forge avatar" role="img"></div>
+    </div>
+    <div class="character-controls">
+      <div class="character-mode-toggle" role="radiogroup" aria-label="Character display mode">
+        <button type="button" class="mode-btn" data-mode="3D" role="radio" aria-checked="false" tabindex="0">3D</button>
+        <button type="button" class="mode-btn" data-mode="2D" role="radio" aria-checked="false" tabindex="0">2D</button>
+        <button type="button" class="mode-btn active" data-mode="Off" role="radio" aria-checked="true" tabindex="0">Off</button>
+      </div>
+    </div>
+    <div id="character-aria-live" aria-live="polite" class="sr-only">Forge is idle and ready</div>
+  </aside>
 </div>
 <footer id="footer">
   <div id="metrics-footer">Ready</div>
 </footer>
-<script nonce="${nonce}" src="${js}"></script></body></html>`;
+<script nonce="${nonce}">
+  window.__FORGE_INITIAL_CONFIG__ = { guideCharacter3d: ${guide3d} };
+</script>
+<script nonce="${nonce}" src="${js}"></script>
+<script nonce="${nonce}" src="${characterJs}"></script></body></html>`;
   }
 }

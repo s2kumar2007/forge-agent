@@ -11,7 +11,7 @@ Forge Agent was benchmarked under real and simulated environments using:
 - **Fallback Agent**: `google-gemini` (`google-gemini/gemini-3-8-flash` catalog entry in TrueForge).
 - **Editor Loopback Server**: Streamable HTTP MCP server registering native workspace tools (`read_file`, `list_dir`, `search_workspace`, `propose_write`, `run_command`, `propose_changes`, `search_symbols`, `find_references`, `get_diagnostics`, `run_tests`).
 
-All three target tasks passed end-to-end with high fidelity, verified independently via `scripts/verify-flask-demo.py` and the 33 test suites (287 automated unit & contract tests).
+All three target tasks passed end-to-end with high fidelity, verified independently via `scripts/verify-flask-demo.py` and the 35 test suites (310 automated unit & contract tests).
 
 ---
 

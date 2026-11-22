@@ -16,5 +16,6 @@ export function getConfig() {
     fallbackContextBudget: Math.max(500, c.get<number>('fallbackContextBudget', 1500)),
     explorationBudget: Math.max(1, c.get<number>('explorationBudget', 12)),
     faultInjection: c.get<string>('faultInjection', 'none'),
+    guideCharacter3d: c.get<boolean>('guide.character3d', false),
   };
 }
