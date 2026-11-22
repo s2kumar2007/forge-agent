@@ -28,16 +28,76 @@ const SOURCE_RE = /\.(py|[cm]?[jt]sx?|go|rs|java|rb|c|h|cpp|cs|md|rst|txt|toml|j
 const fence = (p: string) => (p.endsWith('.py') ? 'python' : /\.[jt]sx?$/.test(p) ? 'ts' : '');
 const slice = (lines: string[], a: number, b: number) => lines.slice(a - 1, b).join('\n');
 
-/** Merges hit line numbers into <= maxSlices windows of +-pad lines. */
+/**
+ * Computes IDF-like keyword weight:
+ * w(k) = clamp(ln((N+1)/(df+1)) / ln(N+1) * 2, 0.15, 1.5).
+ */
+export function keywordWeight(df: number, N: number): number {
+  if (N <= 0) return 1.0;
+  const num = Math.log((N + 1) / (df + 1));
+  const den = Math.log(N + 1);
+  if (den === 0) return 1.0;
+  const raw = (num / den) * 2;
+  return Math.max(0.15, Math.min(1.5, raw));
+}
+
+export const RARE_WEIGHT = 1.0;
+
+/** Merges hit line numbers into <= maxSlices windows of +-pad lines without overlaps. */
 export function windows(hitLines: number[], total: number, pad = 6, maxSlices = 2): [number, number][] {
-  const sorted = [...new Set(hitLines)].sort((a, b) => a - b);
-  const ws: [number, number][] = [];
-  for (const l of sorted) {
-    const a = Math.max(1, l - pad), b = Math.min(total, l + pad);
-    const last = ws[ws.length - 1];
-    if (last && a <= last[1] + 1 && b - last[0] < 40) last[1] = Math.max(last[1], b); else ws.push([a, b]);
+  if (hitLines.length === 0 || total <= 0) return [];
+  const sorted = [...new Set(hitLines)].filter((l) => l >= 1 && l <= total).sort((a, b) => a - b);
+  if (sorted.length === 0) return [];
+
+  const rawRanges: [number, number][] = sorted.map((l) => [Math.max(1, l - pad), Math.min(total, l + pad)]);
+  rawRanges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+
+  const merged: [number, number][] = [];
+  for (const [start, end] of rawRanges) {
+    const prev = merged[merged.length - 1];
+    if (!prev) {
+      merged.push([start, end]);
+      continue;
+    }
+    if (start <= prev[1] + 1) {
+      const newEnd = Math.max(prev[1], end);
+      if (newEnd - prev[0] + 1 <= 40) {
+        prev[1] = newEnd;
+      } else {
+        prev[1] = Math.min(total, prev[0] + 39);
+        const nextStart = Math.max(prev[1] + 1, start);
+        if (nextStart <= end) {
+          merged.push([nextStart, Math.min(total, Math.min(end, nextStart + 39))]);
+        }
+      }
+    } else {
+      merged.push([start, Math.min(total, Math.min(end, start + 39))]);
+    }
   }
-  return ws.slice(0, maxSlices);
+
+  const result: [number, number][] = [];
+  for (const [start, end] of merged) {
+    const prev = result[result.length - 1];
+    if (!prev) {
+      result.push([start, end]);
+    } else if (start <= prev[1]) {
+      const adjStart = prev[1] + 1;
+      if (adjStart <= end) {
+        result.push([adjStart, end]);
+      }
+    } else {
+      result.push([start, end]);
+    }
+  }
+
+  return result.slice(0, maxSlices);
+}
+
+function isTestOrDocFile(p: string): { isTest: boolean; isDoc: boolean } {
+  const l = p.toLowerCase();
+  const isTest = /(?:^|\/)(?:tests?|testing|specs?)\//.test(l) || /(?:^|\/)(?:test_[^/]+|[^/]+_test)\.[^/]+$/.test(l);
+  const isDoc = /(?:^|\/)(?:docs?|documentation)\//.test(l) || /\.(?:rst|md|markdown)$/i.test(l);
+  return { isTest, isDoc };
 }
 
 /**
@@ -99,8 +159,16 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
   const score = new Map<string, number>();
   const why = new Map<string, string[]>();
   const hitLines = new Map<string, number[]>();
-  // `front` puts structural reasons (imports) ahead of the many keyword-hit reasons so they survive the display cap.
-  const bump = (f: string, n: number, reason: string, front = false) => { score.set(f, (score.get(f) ?? 0) + n); why.set(f, front ? [reason, ...(why.get(f) ?? [])] : [...(why.get(f) ?? []), reason]); };
+  const strongReasons = new Set<string>();
+
+  // `front` puts structural reasons (imports) ahead of keyword-hit reasons.
+  const bump = (f: string, n: number, reason: string, front = false, isStrong = false) => {
+    score.set(f, (score.get(f) ?? 0) + n);
+    why.set(f, front ? [reason, ...(why.get(f) ?? [])] : [...(why.get(f) ?? []), reason]);
+    if (isStrong) {
+      strongReasons.add(f);
+    }
+  };
 
   let perKeyword: [string, SearchHit[]][];
   if (deps.searchKeywords) {
@@ -111,25 +179,69 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
   }
   if (signal?.aborted) throw new Error('Operation aborted');
 
+  // Compute corpus document frequency and IDF-like weights
+  const N = Math.max(1, files.length);
+  const kwWeights = new Map<string, number>();
   for (const [k, hits] of perKeyword) {
+    const matchingFiles = new Set(hits.filter((h) => !isSecretPath(h.path)).map((h) => h.path));
+    const df = matchingFiles.size;
+    const w = keywordWeight(df, N);
+    kwWeights.set(k, w);
+  }
+
+  for (const [k, hits] of perKeyword) {
+    const w = kwWeights.get(k) ?? 1.0;
+    const isRare = w >= RARE_WEIGHT;
     const byFile = new Map<string, SearchHit[]>();
     for (const h of hits) {
       if (isSecretPath(h.path)) continue;
       byFile.set(h.path, [...(byFile.get(h.path) ?? []), h]);
     }
     for (const [f, hs] of byFile) {
-      bump(f, Math.min(hs.length, 5), `${hs.length} hit(s) for "${k}"`);
+      const points = Math.min(hs.length, 5) * w;
+      const label = isRare ? `${hs.length} hit(s) for rare term "${k}"` : `${hs.length} hit(s) for "${k}"`;
+      bump(f, points, label, false, isRare);
       hitLines.set(f, [...(hitLines.get(f) ?? []), ...hs.map((h) => h.line)]);
     }
   }
+
   for (const f of files) {
     const base = f.toLowerCase();
-    for (const k of keywords) if (base.includes(k)) bump(f, 3, `path contains "${k}"`);
+    const segments = base.split('/');
+    const filename = segments[segments.length - 1] ?? '';
+    const stem = filename.replace(/\.[^.]+$/, '');
+
+    for (const k of keywords) {
+      const w = kwWeights.get(k) ?? 1.0;
+      const isRare = w >= RARE_WEIGHT;
+
+      const isExactMatch =
+        stem === k ||
+        stem === `test_${k}` ||
+        stem === `${k}_test` ||
+        segments.includes(k);
+
+      if (isExactMatch) {
+        if (isRare) {
+          bump(f, 10, `path matches rare keyword "${k}"`, false, true);
+        } else {
+          bump(f, 3, `path matches keyword "${k}"`, false, false);
+        }
+      } else if (segments.some((s) => s.includes(k))) {
+        if (isRare) {
+          bump(f, 3, `path contains rare keyword "${k}"`, false, true);
+        } else {
+          bump(f, 1, `path contains "${k}"`, false, false);
+        }
+      }
+    }
+
     if (/(?:^|\/)(?:changes|changelog|history|news)\./i.test(base)) {
       score.set(f, (score.get(f) ?? 0) - 20);
     }
   }
-  // Symbol-name matches among the current top candidates.
+
+  // Symbol-name matches among top candidates
   const top = [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([f]) => f);
   for (const f of top) {
     if (signal?.aborted) throw new Error('Operation aborted');
@@ -137,31 +249,77 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
     if (text === undefined) continue;
     const syms = cachedTopLevelSymbols(text, f);
     for (const k of keywords) {
+      const w = kwWeights.get(k) ?? 1.0;
+      const isRare = w >= RARE_WEIGHT;
       const m = syms.find((s) => s.name.toLowerCase().includes(k));
-      if (m) { bump(f, 4, `defines "${m.name}"`); hitLines.set(f, [...(hitLines.get(f) ?? []), m.line]); }
+      if (m) {
+        bump(f, 4 * w, `defines "${m.name}"`, false, isRare);
+        hitLines.set(f, [...(hitLines.get(f) ?? []), m.line]);
+      }
     }
   }
 
-  // Matching test files for the top candidate files
-  for (const f of top) {
-    const baseName = f.replace(/\.[^.]+$/, '').split('/').pop()!;
-    if (baseName.length >= 3 && baseName !== '__init__') {
-      const testPattern = new RegExp(`(?:^|/)(?:test_${baseName}|${baseName}_test|test_${baseName}\\.[^.]+)$`, 'i');
-      for (const file of files) {
-        if (testPattern.test(file) && file !== f) {
-          bump(file, 6, `matching test for ${baseName}`, true);
+  // Identify primary implementation targets (highest score non-test non-doc files, score >= 0.6 * best, max 2)
+  const nonTestNonDocs = [...score.entries()]
+    .filter(([f]) => {
+      const { isTest, isDoc } = isTestOrDocFile(f);
+      return !isTest && !isDoc;
+    })
+    .sort((a, b) => b[1] - a[1]);
+
+  const bestNonTestScore = nonTestNonDocs[0]?.[1] ?? 0;
+  const primaryTargets: string[] = [];
+  if (bestNonTestScore > 0) {
+    for (const [f, sc] of nonTestNonDocs) {
+      if (sc >= 0.6 * bestNonTestScore && primaryTargets.length < 2) {
+        primaryTargets.push(f);
+      }
+    }
+  }
+
+  const linkedTests = new Set<string>();
+  const linkedDocs = new Set<string>();
+
+  for (const pTarget of primaryTargets) {
+    const stem = pTarget.replace(/\.[^.]+$/, '').split('/').pop()!;
+    if (stem.length < 3 || stem === '__init__') continue;
+
+    const testRegex = new RegExp(`(?:^|/)(?:test_${stem}|${stem}_test|test_${stem}\\.[^.]+)$`, 'i');
+    const docRegex = new RegExp(`(?:^|/)docs/.*${stem}.*`, 'i');
+
+    for (const file of files) {
+      if (file === pTarget) continue;
+      const { isTest, isDoc } = isTestOrDocFile(file);
+
+      if (isTest && (testRegex.test(file) || file.toLowerCase().includes(`test_${stem}`))) {
+        linkedTests.add(file);
+        bump(file, 25, `test for primary target ${pTarget}`, true, true);
+        if (!hitLines.has(file) || hitLines.get(file)!.length === 0) {
           const testText = await cachedReadText(file);
           if (testText) {
-            const syms = cachedTopLevelSymbols(testText, file);
-            for (const s of syms) {
-              hitLines.set(file, [...(hitLines.get(file) ?? []), s.line]);
-            }
+            const lines = testText.split('\n');
+            const matchLine = lines.findIndex((l) => l.toLowerCase().includes(stem.toLowerCase()));
+            const startLine = matchLine >= 0 ? Math.max(1, matchLine - 2) : 1;
+            hitLines.set(file, [startLine]);
+          }
+        }
+      } else if (isDoc && (docRegex.test(file) || file.toLowerCase().includes(`/${stem}.`) || file.toLowerCase().includes(`_${stem}.`))) {
+        linkedDocs.add(file);
+        bump(file, 25, `docs for primary target ${pTarget}`, true, true);
+        if (!hitLines.has(file) || hitLines.get(file)!.length === 0) {
+          const docText = await cachedReadText(file);
+          if (docText) {
+            const lines = docText.split('\n');
+            const matchLine = lines.findIndex((l) => l.toLowerCase().includes(stem.toLowerCase()));
+            const startLine = matchLine >= 0 ? Math.max(1, matchLine - 2) : 1;
+            hitLines.set(file, [startLine]);
           }
         }
       }
     }
   }
-  // Files importing the best matches: the code that depends on what we are about to change.
+
+  // Files importing the best matches
   const candidateMods: { file: string; mod: string }[] = [];
   for (const f of [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([x]) => x)) {
     const mod = f.replace(/\.[^.]+$/, '').split('/').pop()!;
@@ -182,17 +340,59 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
   }
   if (signal?.aborted) throw new Error('Operation aborted');
 
-  const ranked = [...score.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 12);
-  for (const [f, sc] of ranked) {
+  // Penalize files that have ONLY generic reasons and NO strong reason (-20)
+  for (const [f, sc] of score.entries()) {
+    if (!strongReasons.has(f)) {
+      score.set(f, sc - 20);
+    }
+  }
+
+  // Reservation for tests and docs if requested
+  const wantsTestsOrDocs = /\btests?\b|\bdocument|\bdocs?\b/i.test(request);
+  let bestTestFile: string | undefined;
+  let bestDocFile: string | undefined;
+
+  if (wantsTestsOrDocs) {
+    let bestTestScore = -Infinity;
+    for (const tFile of linkedTests) {
+      const sc = score.get(tFile) ?? 0;
+      if (sc > bestTestScore) {
+        bestTestScore = sc;
+        bestTestFile = tFile;
+      }
+    }
+    let bestDocScore = -Infinity;
+    for (const dFile of linkedDocs) {
+      const sc = score.get(dFile) ?? 0;
+      if (sc > bestDocScore) {
+        bestDocScore = sc;
+        bestDocFile = dFile;
+      }
+    }
+  }
+
+  const topScored = [...score.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const candidateFiles = new Set(topScored.slice(0, 12).map(([f]) => f));
+  if (bestTestFile) candidateFiles.add(bestTestFile);
+  if (bestDocFile) candidateFiles.add(bestDocFile);
+
+  for (const f of candidateFiles) {
+    const sc = score.get(f) ?? 0;
     const text = await cachedReadText(f);
     if (text === undefined) continue;
     const lines = text.split('\n');
     const syms = cachedTopLevelSymbols(text, f);
     const reason = [...new Set(why.get(f))].slice(0, 5).join('; ');
     const sigs = syms.slice(0, 25).map((s) => `${s.line}: ${s.signature}`).join('\n');
-    if (sigs) items.push({ label: `${f} (signatures)`, reason, text: sigs, priority: 40 + sc });
+
+    let priorityBoost = 0;
+    if (f === bestTestFile || f === bestDocFile) {
+      priorityBoost = 40;
+    }
+
+    if (sigs) items.push({ label: `${f} (signatures)`, reason, text: sigs, priority: 40 + sc + priorityBoost });
     for (const [a, b] of windows(hitLines.get(f) ?? [], lines.length)) {
-      items.push({ label: `${f}:${a}-${b}`, reason, text: slice(lines, a, b), priority: 50 + sc });
+      items.push({ label: `${f}:${a}-${b}`, reason, text: slice(lines, a, b), priority: 50 + sc + priorityBoost });
     }
   }
 
@@ -205,7 +405,6 @@ export async function assembleContext(request: string, deps: ContextDeps, budget
   const { packed } = packContext(items, limit - estimateTokens(prefix));
   const text = prefix + packed.map(renderContextItem).join('');
   return { text, items: packed, tokens: estimateTokens(text), budget: limit, keywords };
-
 }
 
 /** Directory -> files listing, truncated to maxChars. */
