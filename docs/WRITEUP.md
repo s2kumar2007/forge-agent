@@ -74,7 +74,8 @@ Agent mode automatically gathers workspace context using a multi-stage retrieval
 | B2 Diff safety | [01:50] | Single-use approval tokens, base-hash stale guards, and multi-step undo. |
 | B3 Resilience | [03:00] | Fast failover on permanent errors, 5-minute circuit breaker, and handoff brief. |
 | B4 TrueForge integration depth | [02:10] | TrueForge sessions and turns, loopback MCP tools, and visible lifecycle events. |
-| C1 Video and C2 Write-up | [03:45] | Complete demo covering Tasks A-C and concise technical submission write-up. |
+| C1 Video | [03:30] | Four-minute demo demonstrating Tasks A, B, and C with session visibility. |
+| C2 Write-up | [03:50] | Structured technical write-up covering architecture, context, and models. |
 
 ## 7. Tools used
 

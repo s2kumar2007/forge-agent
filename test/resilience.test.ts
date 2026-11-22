@@ -378,9 +378,9 @@ describe('quota failure messages (ITEM 2)', () => {
   });
 
   it('redacts secrets and strips stack traces in briefReason', () => {
-    const err = new Error('429 rate limit: Bearer gsk_1234567890abcdef\n    at fetch (node:internal/deps/undici:123)');
+    const err = new Error('429 rate limit: Bearer sk-1234567890abcdef\n    at fetch (node:internal/deps/undici:123)');
     const sanitized = briefReason(err);
-    expect(sanitized).not.toContain('gsk_1234567890abcdef');
+    expect(sanitized).not.toContain('sk-1234567890abcdef');
     expect(sanitized).not.toContain('at fetch');
     expect(sanitized).not.toContain('node:internal');
     expect(sanitized).toContain('[REDACTED]');
@@ -389,7 +389,7 @@ describe('quota failure messages (ITEM 2)', () => {
   it('when primary fails with 429 quota and fallback fails with 429 quota, shows one clear panel message naming both failures and saying no files were changed', async () => {
     const { root, gitStatus } = tempRepo();
     const primaryBoom = () => { throw new Error('429: Rate limit reached for model gemini: key: secret_key_gemini_123\n    at node:internal'); };
-    const fallbackBoom = () => { throw new Error('429: Quota exceeded for model groq: Bearer gsk_groq_secret_456\n    at providerCall (src/api.ts:10)'); };
+    const fallbackBoom = () => { throw new Error('429: Quota exceeded for model groq: Bearer sk-mock_groq_secret_456\n    at providerCall (src/api.ts:10)'); };
     const tf = new FakeTrueForge({ 'forge-agent': [primaryBoom, primaryBoom, primaryBoom], 'forge-agent-fallback': [fallbackBoom, fallbackBoom, fallbackBoom] });
     const ui = new RecordingUi();
     await build(root, tf).run('modify code', ui);
@@ -397,7 +397,7 @@ describe('quota failure messages (ITEM 2)', () => {
     expect(ui.result?.status).toBe('error');
     expect(ui.result?.message).toBe('Primary model failed (429: Rate limit reached for model gemini: [REDACTED]); fallback model failed (429: Quota exceeded for model groq: [REDACTED]). No files were changed.');
     expect(ui.result?.message).not.toContain('secret_key_gemini_123');
-    expect(ui.result?.message).not.toContain('gsk_groq_secret_456');
+    expect(ui.result?.message).not.toContain('sk-mock_groq_secret_456');
     expect(ui.result?.message).not.toContain('node:internal');
     expect(ui.result?.message).not.toContain('providerCall');
     expect(gitStatus()).toBe('');

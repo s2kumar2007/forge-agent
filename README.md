@@ -319,7 +319,7 @@ Open the Flask folder in the Extension Development Host.
 
 - **Command permissions**: Shell commands run with the host user's permissions. Path checks reject directory traversal, but `run_command` is not an OS sandbox. Approved command side-effects cannot be rolled back automatically.
 - **Undo persistence**: The undo stack (`forge.undoLast`) stores up to 50 operations in memory across reloads, but will refuse to overwrite files if subsequent external edits occurred.
-- **Approved operation guard**: Automatic retry and fallback are disabled once an approval has been granted for a write or command, preventing duplicate external effects.
+- **Approved operation guard**: Automatic retry and fallback are disabled once an approval has been granted for a write or command, preventing duplicate external mutations; cancelled or failed runs can retain previously approved effects.
 - **Provider rate limits**: Primary (NVIDIA NIM) and fallback (Google Gemini) run on independent providers, but each is subject to its respective provider free-tier quotas and rate limits.
 - **Context estimation**: Token budgeting uses a character-based heuristic (~4 characters per token).
 - **Single active request**: One active request is processed per workspace at a time.

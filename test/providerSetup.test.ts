@@ -64,7 +64,7 @@ describe('configureProvider execution and isolation', () => {
   });
 
   it('never exposes API keys in output or error messages', async () => {
-    const fakeKey = 'nvapi-very-secret-test-key-77777';
+    const fakeKey = 'nvapi-mock-test-key';
     const fetchImpl = vi.fn(async (url: string) => {
       if (url.includes('/settings/model-providers')) {
         return {
