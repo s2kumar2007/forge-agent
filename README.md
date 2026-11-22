@@ -2,7 +2,7 @@
 
 Forge Agent is a VS Code extension that turns **TrueForge agent sessions** into an interactive, reviewed coding workflow. The agent loop runs on a local TrueForge server, which orchestrates the model, subagents, and context compaction, while the editor exposes local workspace capabilities as Model Context Protocol (MCP) tools. The extension provides automated context assembly, per-hunk interactive diff review, explicit command approvals, multi-step undo, and resilient model fallback.
 
-- **Demo video**: [TODO: video link]
+- **Demo video**: https://drive.google.com/file/d/1MDwhOBLavXx0RgBdyjqqmzzy4vKF1Lid/view?usp=drive_link
 - **Write-up (PDF)**: docs/WRITEUP.pdf
 
 ## Team

@@ -65,17 +65,19 @@ Agent mode automatically gathers workspace context using a multi-stage retrieval
 
 ## 6. Scorecard
 
+No judge score is claimed. Times refer to the demo video (total 3:56).
+
 | Criterion | Video time | One-line claim |
 |---|---|---|
-| A1 Inline edit | [00:15] | Scoped inline edit on get_debug_flag with diff review, verified by test script. |
-| A2 Agent mode | [01:20] | Multi-file discovery and atomic propose_changes for flask config without file hints. |
-| A3 Streaming and cancellation | [02:30] | Streamed deltas, responsive panel timeline, and clean stop cancellation. |
-| B1 Context assembly | [00:45] | Ranked keyword and importer retrieval packed within deterministic token budgets. |
-| B2 Diff safety | [01:50] | Single-use approval tokens, base-hash stale guards, and multi-step undo. |
-| B3 Resilience | [03:00] | Fast failover on permanent errors, 5-minute circuit breaker, and handoff brief. |
-| B4 TrueForge integration depth | [02:10] | TrueForge sessions and turns, loopback MCP tools, and visible lifecycle events. |
-| C1 Video | [03:30] | Four-minute demo demonstrating Tasks A, B, and C with session visibility. |
-| C2 Write-up | [03:50] | Structured technical write-up covering architecture, context, and models. |
+| A1 Inline edit | 0:04 to 0:25 | Selected function, keybinding, instruction, then a diff with per-hunk accept and reject. |
+| A2 Agent mode | 0:25 to 3:07 | Task B with no file named: the agent discovers and proposes edits to several files. |
+| A3 Streaming and cancellation | 3:44 to 3:52 | Streamed events; Stop aborts the run and closes any open review with no half-applied edits. |
+| B1 Context assembly | 0:33 to 0:48 | Ranked retrieval within a token budget, with chosen files and reasons shown in Context used. |
+| B2 Diff safety | 0:09 to 0:18, 1:35 to 2:05, 2:35 to 2:55 | Per-hunk review before any write, and undo of an applied change. |
+| B3 Resilience | 3:07 to 3:44 | Invalid key fails over to a fallback model on another provider; workspace unchanged. |
+| B4 TrueForge integration depth | 1:00 to 1:12, 1:35 to 2:05 | TrueForge session with turns and tool calls; editor tools as MCP tools; approval-driven review. |
+| C1 Video | 0:00 to 3:56 | The demo video (3:56 in total; link in README.md). |
+| C2 Write-up | 0:00 to 3:56 | Structured technical write-up covering architecture, context, models and scorecard. |
 
 ## 7. Tools used
 

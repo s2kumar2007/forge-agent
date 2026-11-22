@@ -27,8 +27,8 @@ Members: B. Sunil Kumar (Team leader), Eric Bejoy, Ashmit Sharma, Shaurya Singla
 
 ## Checklist of Remaining Submission Steps
 
-- [ ] Record 4-minute demo video covering Tasks A, B, and C in order according to scripts/demo.md rules
-- [ ] Make demo video publicly accessible and update link in README.md (`[TODO: video link]`)
+- [x] Record 4-minute demo video covering Tasks A, B, and C in order (3:56 runtime, recorded live)
+- [x] Make demo video publicly accessible and update link in README.md (https://drive.google.com/file/d/1MDwhOBLavXx0RgBdyjqqmzzy4vKF1Lid/view?usp=drive_link)
 - [x] Export final submission write-up PDF (`docs/WRITEUP.pdf`)
 - [ ] Confirm GitHub repository is public (`https://github.com/s2kumar2007/VS-CODE-EXTENSION.git`)
 - [x] Run final secret and credential audit (confirm zero API keys, bearer tokens, or private emails committed)
