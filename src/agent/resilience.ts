@@ -79,13 +79,53 @@ export function isQuotaError(err: unknown): boolean {
   return /\b429\b|rate[-_ ]?limit|quota|too many requests|resource[ _]exhausted/i.test(message);
 }
 
+/** Detects configuration errors (e.g. HTTP 422 Unprocessable Entity, missing model/provider). */
+export function isConfigError(err: unknown): boolean {
+  if (!err) return false;
+  const status = (err as any)?.status ?? (err as any)?.statusCode ?? (err as any)?.response?.status;
+  if (status === 422) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /unprocessable ?entity|configure the required models|failed to sync|provider not configured|unknown model|model .*not (found|configured)/i.test(message);
+}
+
+export type ErrorClass = 'config' | 'auth' | 'rate-limit' | 'overloaded' | 'stall' | 'network' | 'other';
+
+export function isNetworkError(err: unknown): boolean {
+  if (!err) return false;
+  const message = err instanceof Error ? err.message : String(err);
+  return /(?:fetch failed|econnrefused|econnreset|enotfound|etimedout|connection refused|connection reset|connection timeout|connect econnrefused|failed to fetch|network\s*error|socket hang up)/i.test(message);
+}
+
+export function isAuthError(err: unknown): boolean {
+  if (!err) return false;
+  const status = (err as any)?.status ?? (err as any)?.statusCode ?? (err as any)?.response?.status;
+  if (status === 401 || status === 403) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b(?:401|403)\b|unauthorized|forbidden/i.test(message);
+}
+
+export function classifyError(err: unknown): ErrorClass {
+  if (isConfigError(err)) return 'config';
+  if (isStallError(err)) return 'stall';
+  if (isOverloadedError(err)) return 'overloaded';
+  if (isQuotaError(err)) return 'rate-limit';
+  if (isAuthError(err)) return 'auth';
+  if (isNetworkError(err)) return 'network';
+  return 'other';
+}
+
+export function configHint(model: string): string {
+  return `Model "${model}" is not configured in TrueForge. Add that provider and model in the TrueForge settings (http://localhost:8790) or run scripts/configure-provider.cjs, then try again. Skipping it and trying the next model.`;
+}
+
 /** Permanent errors that should fail fast without retrying. */
 export function isPermanentError(err: unknown): boolean {
   if (!err) return false;
+  if (isConfigError(err)) return true;
   const status = (err as any)?.status ?? (err as any)?.statusCode ?? (err as any)?.response?.status;
-  if (status === 400 || status === 401 || status === 403 || status === 404 || status === 413) return true;
+  if (status === 400 || status === 401 || status === 403 || status === 404 || status === 413 || status === 422) return true;
   const message = err instanceof Error ? err.message : String(err);
-  if (/\b(?:400|401|403|404|413)\b/.test(message)) return true;
+  if (/\b(?:400|401|403|404|413|422)\b/.test(message)) return true;
   if (/unauthorized|forbidden|not found|too large|payload too large|request too large/i.test(message) && !/429/i.test(message)) return true;
   return false;
 }

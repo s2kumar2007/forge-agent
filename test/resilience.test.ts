@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { runWithFallback, ForgeFailure, CancelledError, isQuotaError, briefReason } from '../src/agent/resilience';
+import { runWithFallback, ForgeFailure, CancelledError, isQuotaError, briefReason, isConfigError, classifyError, configHint, isPermanentError } from '../src/agent/resilience';
 import { AgentController, sanitizeReason } from '../src/agent/controller';
 import { ReviewApprovals } from '../src/review/approvals';
 import { DecisionStore } from '../src/review/decisions';
@@ -653,6 +653,90 @@ describe('quota failure messages (ITEM 2)', () => {
         message: 'The agent reached its step limit before finishing. No files were changed. You can run the request again.',
       });
       expect(ui.notices).toEqual([]);
+    });
+
+    it('classifies config errors and fails fast without retrying (STEP 1)', async () => {
+      expect(isConfigError({ status: 422 })).toBe(true);
+      expect(isConfigError(new Error('UnprocessableEntityError: model not found'))).toBe(true);
+      expect(isConfigError(new Error('Configure the required models in TrueForge before running Forge'))).toBe(true);
+      expect(isConfigError(new Error('Failed to sync: forge-agent: UnprocessableEntityError'))).toBe(true);
+      expect(isConfigError(new Error('provider not configured'))).toBe(true);
+      expect(isConfigError(new Error('unknown model forge-xyz'))).toBe(true);
+      expect(isConfigError(new Error('model llama-3 not configured'))).toBe(true);
+      expect(isConfigError(new Error('500 Internal Server Error'))).toBe(false);
+
+      expect(classifyError({ status: 422 })).toBe('config');
+      expect(classifyError(new Error('first token timeout'))).toBe('stall');
+      expect(classifyError(new Error('503 Service Unavailable: high demand'))).toBe('overloaded');
+      expect(classifyError(new Error('429 rate limit reached'))).toBe('rate-limit');
+      expect(classifyError({ status: 401 })).toBe('auth');
+      expect(classifyError(new Error('connect ECONNREFUSED 127.0.0.1:8790'))).toBe('network');
+      expect(classifyError(new Error('something strange happened'))).toBe('other');
+
+      expect(isPermanentError({ status: 422 })).toBe(true);
+      expect(isPermanentError(new Error('unknown model'))).toBe(true);
+    });
+
+    it('primary config error triggers failover with 0 retries and 0 sleeps', async () => {
+      const calls: string[] = [];
+      const sleeps: number[] = [];
+      const { o } = opts(
+        async (a) => {
+          calls.push(a);
+          if (a === 'p') {
+            const err: any = new Error('Configure the required models in TrueForge. Failed to sync: forge-agent: UnprocessableEntityError');
+            err.status = 422;
+            throw err;
+          }
+          return 'fallback-ok';
+        },
+        {
+          sleep: async (ms: number) => { sleeps.push(ms); },
+        }
+      );
+
+      const res = await runWithFallback(o);
+      expect(res).toBe('fallback-ok');
+      expect(calls).toEqual(['p', 'f']);
+      expect(sleeps).toEqual([]);
+    });
+
+    it('emits configHint on primary config error during controller run', async () => {
+      const { root } = tempRepo();
+      const configErr: any = new Error('Failed to sync: forge-agent: UnprocessableEntityError');
+      configErr.status = 422;
+
+      const tf = new FakeTrueForge({
+        'forge-agent': [() => { throw configErr; }],
+        'forge-agent-fallback': [() => [created(), delta('m1', 'from fallback'), done()]],
+      });
+
+      const sleeps: number[] = [];
+      const approvals = new ReviewApprovals({
+        root,
+        ui: { reviewHunks: async () => [], confirmCommand: async () => false, close() {} },
+        store: new DecisionStore(),
+        readText: async () => undefined,
+      });
+
+      const ctl = new AgentController({
+        getClient: () => tf.client,
+        approvals,
+        agents: () => ({ primary: 'forge-agent', fallback: 'forge-agent-fallback', fallbackModel: 'fallback-model' }),
+        retries: 2,
+        sleep: async (ms) => { sleeps.push(ms); },
+      });
+
+      const ui = new RecordingUi();
+      await ctl.run('test task', ui);
+
+      expect(ui.result?.status).toBe('done');
+      expect(sleeps).toEqual([]);
+      expect(ui.notices.some((n) => n.includes('is not configured in TrueForge'))).toBe(true);
+      expect(ui.notices.some((n) => n.includes('Attempt 1 to'))).toBe(false);
+      // reusing 0 files should NOT be present
+      expect(ui.notices.some((n) => n.includes('reusing 0 files'))).toBe(false);
+      expect(ui.notices.some((n) => n.includes('Primary unavailable, continuing on fallback'))).toBe(true);
     });
   });
 });

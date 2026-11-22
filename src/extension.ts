@@ -3,6 +3,7 @@ import { getConfig } from './config';
 import { startEditorMcpServer, type EditorMcpServer } from './mcp/server';
 import { createClient, registerMcpServer } from './forge/client';
 import { getAgentModel, loadAgentFiles, syncAgents } from './forge/agents';
+import { checkProviders, formatProviderReport } from './forge/providers';
 import { ChatPanel } from './panel/ChatPanel';
 import { registerEditorTools, resetToolRunState } from './mcp/tools';
 import { findRg, VsCodeEditorApi } from './workspace/vscodeApi';
@@ -86,7 +87,45 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand('forge.openPanel', () => { if (ctxDeps) ChatPanel.show(ctx, controller, ctxDeps); else void vscode.window.showWarningMessage('Forge: open a folder first.'); }),
     vscode.commands.registerCommand('forge.inlineEdit', () => inlineEdit(controller, 'forge-inline')),
     vscode.commands.registerCommand('forge.undoLast', async () => { if (api) void vscode.window.showInformationMessage('Forge: ' + await api.undoLast()); }),
+    vscode.commands.registerCommand('forge.testProviders', async () => {
+      try {
+        const client = createClient(getConfig().baseUrl);
+        const agentsDir = vscode.Uri.joinPath(ctx.extensionUri, 'agents').fsPath;
+        const agentFiles = await loadAgentFiles(agentsDir);
+        const statuses = await checkProviders(client, agentFiles);
+        const report = formatProviderReport(statuses);
+        outputChannel.appendLine(report);
+        const notReady = statuses.filter((s) => s.checked && !s.ready);
+        if (notReady.length > 0) {
+          const hint = notReady[0]?.fix ?? 'Check TrueForge provider settings.';
+          void vscode.window.showWarningMessage(`Forge: ${notReady.length} model(s) not ready. ${hint}`);
+        } else {
+          void vscode.window.showInformationMessage('Forge: All configured models are ready.');
+        }
+      } catch (err) {
+        outputChannel.appendLine(`Forge test providers error: ${err}`);
+      }
+    }),
   );
+
+  // Background provider check: notify if not ready, never block activation.
+  void (async () => {
+    try {
+      const client = createClient(getConfig().baseUrl);
+      const agentsDir = vscode.Uri.joinPath(ctx.extensionUri, 'agents').fsPath;
+      const agentFiles = await loadAgentFiles(agentsDir);
+      const statuses = await checkProviders(client, agentFiles);
+      const report = formatProviderReport(statuses);
+      outputChannel.appendLine(report);
+      const notReady = statuses.filter((s) => s.checked && !s.ready);
+      if (notReady.length > 0) {
+        const hint = notReady[0]?.fix ?? 'Check TrueForge provider settings.';
+        void vscode.window.showWarningMessage(`Forge: ${notReady.length} model(s) not ready. ${hint}`);
+      }
+    } catch (err) {
+      outputChannel.appendLine(`Forge background provider check failed: ${err}`);
+    }
+  })();
 
   // Start the MCP server and register everything in the background: never block activation.
   if (api) void ensureReady().catch(() => { void vscode.window.showWarningMessage('Forge: TrueForge is not reachable or setup failed. Start it and configure the models; Forge retries when you send a request.'); });
