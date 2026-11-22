@@ -338,24 +338,26 @@ html, body {
   padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   scroll-behavior: smooth;
   background: var(--vscode-editor-background);
 }
 
 .msg {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
-  padding: 10px 12px;
-  border-radius: 8px;
-  line-height: 1.5;
+  padding: 8px 10px;
+  border-radius: 6px;
+  line-height: 1.45;
   box-sizing: border-box;
+  font-size: var(--vscode-font-size, 13px);
 }
 
 .msg.user {
-  background: var(--vscode-chat-requestBackground, var(--vscode-editor-inactiveSelectionBackground));
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  background: var(--vscode-button-secondaryBackground, rgba(255, 255, 255, 0.08));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-button-border, var(--vscode-panel-border));
   margin-left: 24px;
   align-self: flex-end;
   max-width: 85%;
@@ -363,14 +365,14 @@ html, body {
 }
 
 .msg.user::before {
-  content: "You";
+  content: "YOU";
   display: block;
   font-size: 0.72em;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--vscode-descriptionForeground);
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .msg.agent {
@@ -378,14 +380,16 @@ html, body {
   background: var(--vscode-editor-background);
   color: var(--vscode-editor-foreground, var(--vscode-foreground));
   border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
-  margin-right: 24px;
-  align-self: flex-start;
-  max-width: 90%;
-  border-bottom-left-radius: 2px;
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .msg.agent::before {
-  content: "Forge Agent";
+  content: "FORGE AGENT";
   display: block;
   font-size: 0.72em;
   font-weight: 600;
@@ -419,28 +423,45 @@ html, body {
   background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
 }
 
-.msg.tool, div.msg.notice {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.82em;
-  padding: 4px 10px;
-  border-radius: 12px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
-  border: 1px solid var(--vscode-widget-border, transparent);
-  align-self: flex-start;
-  max-width: fit-content;
-  white-space: normal;
+.msg.tool {
+  display: block;
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  font-size: 0.88em;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-panel-border);
+  border-left: 3px solid var(--vscode-editorInfo-foreground);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .msg.tool::before {
-  content: "\26A1";
+  content: "\26A1 ";
   font-size: 0.9em;
 }
 
+div.msg.notice, .msg.notice {
+  display: block;
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  font-size: 0.88em;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+  color: var(--vscode-editorInfo-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-panel-border);
+  border-left: 3px solid var(--vscode-editorInfo-foreground);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 div.msg.notice::before {
-  content: "\2139";
+  content: "\2139  ";
   font-size: 0.9em;
 }
 
@@ -448,11 +469,15 @@ div.msg.notice::before {
   background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.12));
   color: var(--vscode-errorForeground, #f48771);
   border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
-  border-radius: 6px;
-  padding: 8px 12px;
+  border-radius: 4px;
+  border-left: 3px solid var(--vscode-errorForeground);
+  padding: 8px 10px;
   font-size: 0.9em;
   align-self: stretch;
+  width: 100%;
   max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .msg.error::before {
@@ -464,11 +489,15 @@ div.msg.notice::before {
   background: var(--vscode-editorWidget-background, var(--vscode-editor-inactiveSelectionBackground));
   border: 1px solid var(--vscode-focusBorder, var(--vscode-panel-border));
   border-radius: 6px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   align-self: stretch;
+  width: 100%;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .preview-header {
@@ -483,6 +512,8 @@ div.msg.notice::before {
   font-size: 12px;
   color: var(--vscode-foreground);
   font-family: var(--vscode-editor-font-family, Consolas, "Courier New", monospace);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .confidence-tag {
@@ -517,25 +548,31 @@ div.msg.notice::before {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
   line-height: 1.3;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
-details.msg {
+details.msg, details.context-details {
   display: block;
   align-self: stretch;
+  width: 100%;
   max-width: 100%;
-  border-radius: 6px;
-  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  border: 1px solid var(--vscode-panel-border);
+  border-left: 3px solid var(--vscode-editorInfo-foreground);
   background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
   color: var(--vscode-foreground);
-  padding: 8px 12px;
-  margin: 4px 0;
+  padding: 6px 10px;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
-details.msg summary {
+details.msg summary, details.context-details summary {
   cursor: pointer;
   font-weight: 500;
-  font-size: 0.85em;
-  color: var(--vscode-descriptionForeground);
+  font-size: 0.88em;
+  color: var(--vscode-editorInfo-foreground, var(--vscode-foreground));
   outline: none;
   user-select: none;
   display: flex;
@@ -543,27 +580,31 @@ details.msg summary {
   gap: 6px;
 }
 
-details.msg summary:hover {
+details.msg summary:hover, details.context-details summary:hover {
   color: var(--vscode-foreground);
 }
 
-details.msg[open] summary {
-  margin-bottom: 8px;
+details.msg[open] summary, details.context-details[open] summary {
+  margin-bottom: 6px;
   border-bottom: 1px solid var(--vscode-panel-border);
-  padding-bottom: 6px;
+  padding-bottom: 4px;
 }
 
-details.msg > div {
+details.msg > div, .context-item {
   font-family: var(--vscode-editor-font-family, Consolas, "Courier New", monospace);
-  font-size: 0.82em;
+  font-size: 0.84em;
   padding: 3px 0;
   color: var(--vscode-descriptionForeground);
   line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 code, pre {
   font-family: var(--vscode-editor-font-family, Consolas, "Courier New", monospace);
   font-size: var(--vscode-editor-font-size, 0.9em);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 #ac {

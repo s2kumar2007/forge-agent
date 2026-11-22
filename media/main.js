@@ -186,7 +186,7 @@ window.addEventListener('message', ({ data: m }) => {
       setTimelineStep('context');
       updateTokenBar(m.tokens, m.budget);
       const d = document.createElement('details');
-      d.className = 'msg notice';
+      d.className = 'msg context-details';
       const sm = document.createElement('summary');
       sm.textContent = 'Context: ' + m.items.length + ' items, ' + m.tokens + ' of ' + m.budget + ' estimated tokens';
       d.append(sm);
