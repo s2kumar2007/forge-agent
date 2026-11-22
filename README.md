@@ -2,7 +2,6 @@
 
 Forge Agent is a VS Code extension that turns **TrueForge agent sessions** into an interactive, reviewed coding workflow. The agent loop runs on a local TrueForge server, which orchestrates the model, subagents, and context compaction, while the editor exposes local workspace capabilities as Model Context Protocol (MCP) tools. The extension provides automated context assembly, per-hunk interactive diff review, explicit command approvals, multi-step undo, and resilient model fallback.
 
-- **Demo video**: [TODO: video link]
 - **Write-up (PDF)**: docs/WRITEUP.pdf
 
 ## Starting point
@@ -16,9 +15,9 @@ Written from scratch for Round 1 of the Techfest 2026-27 TrueFoundry Forge-a-tho
 | Member | Role | GitHub |
 |---|---|---|
 | B. Sunil Kumar (Team Leader) | Lead developer of the extension core (TrueForge integration, MCP editor tools, context retrieval, diff review) | [s2kumar2007](https://github.com/s2kumar2007) |
-| Eric Bejoy | Testing, documentation and demo video [TODO: confirm role] | [TODO: GitHub handle] |
-| Ashmit Sharma | Resilience and model fallback code | [TODO: GitHub handle] |
-| Shaurya Singla | Context and TrueForge session visibility code | [TODO: GitHub handle] |
+| Eric Bejoy | Testing, documentation and demo video | [ericjbejoy-ux](https://github.com/ericjbejoy-ux) |
+| Ashmit Sharma | Resilience and model fallback code | [ASH10022008](https://github.com/ASH10022008) |
+| Shaurya Singla | Context and TrueForge session visibility code | [shauryasingla505](https://github.com/shauryasingla505) |
 
 ## Architecture summary
 
@@ -307,7 +306,7 @@ Open the Flask repository in the Extension Development Host.
 
 - GitHub Copilot
 - ChatGPT
-- [TODO: confirm all AI tools]
+- Antigravity
 
 ## Licence
 
