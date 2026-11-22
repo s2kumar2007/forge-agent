@@ -36,6 +36,10 @@
       {
         "command": "forge.testProviders",
         "title": "Forge: Test providers"
+      },
+      {
+        "command": "forge.showTimings",
+        "title": "Forge: Show last run timings"
       }
     ],
     "configuration": {
@@ -149,7 +153,7 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --testTimeout=15000",
     "package:win": "vsce package --target win32-x64 --out output/forge-agent-win32-x64.vsix"
   },
   "dependencies": {

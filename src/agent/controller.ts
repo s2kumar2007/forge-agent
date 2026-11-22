@@ -1,5 +1,6 @@
 import type { TrueForge, TrueForgeApi } from '@truefoundry/trueforge-sdk';
 import { describeToolCall, runTurn, toolName } from '../forge/turnRunner';
+import { getAgentModel } from '../forge/agents';
 import type { AgentUi, ApprovalHandler } from './types';
 import { CancelledError, ForgeFailure, IterationLimitError, isIterationLimitError, runWithFallback, isOverloadedError, isStallError, isConfigError, configHint, classifyError, type FallbackTarget } from './resilience';
 import { RunMetricsCollector, type RunMetrics } from '../metrics';
@@ -152,6 +153,12 @@ const isMutatingTool = (n: string) => /(?:propose_write|propose_changes|run_comm
  * Drives one user request end to end: session -> turn -> (approvals -> new turn)* -> done.
  * Independent of VS Code so it can be unit-tested with a fake TrueForge client.
  */
+export interface RunTimings {
+  firstEventMs: number | undefined;
+  totalMs: number;
+  turns: number;
+}
+
 export class AgentController {
   private running = false;
   private cancelled = false;
@@ -163,6 +170,8 @@ export class AgentController {
   private handoffTracker = new HandoffTracker();
   private modelHealth: ModelHealthTracker;
   private attemptCount = 0;
+  private lastRunTimings?: RunTimings;
+  private runFirstEventMs?: number;
   private readonly circuitBreakerDurationMs: number;
   private readonly now: () => number;
 
@@ -173,6 +182,10 @@ export class AgentController {
   }
 
   get busy(): boolean { return this.running; }
+
+  getLastRunTimings(): RunTimings | undefined {
+    return this.lastRunTimings;
+  }
 
   getHandoffTracker(): HandoffTracker {
     return this.handoffTracker;
@@ -201,6 +214,8 @@ export class AgentController {
     rebuildRequest?: (agent: string) => Promise<string>,
   ): Promise<void> {
     if (this.running) { ui.finished({ status: 'error', message: 'Forge is already working on a request.' }); return; }
+    const runStartTime = this.now();
+    this.runFirstEventMs = undefined;
     this.attemptCount = 0;
     this.running = true;
     this.cancelled = false;
@@ -269,26 +284,34 @@ export class AgentController {
         },
         attempt: async (agent, target) => {
           const t0 = this.now();
-          const model = target?.model ?? agent;
+          const targetModel = target?.model ?? agent;
+          let configuredModel = targetModel;
+          let firstEventMs: number | undefined;
           try {
             const outcome = await this.attempt(
               agent,
-              model,
+              targetModel,
               request,
               ui,
               rebuildRequest,
               () => ++clientToolResponses,
               metricsCollector,
               primaryAgent,
+              (info) => {
+                configuredModel = info.configuredModel;
+                firstEventMs = info.firstEventMs;
+              },
             );
             const elapsedMs = Math.round(this.now() - t0);
-            this.d.logAttempt?.(`[forge] Attempt ${this.attemptCount} result: agent=${agent} model=${model} outcome=${outcome} elapsedMs=${elapsedMs}`);
+            const feStr = firstEventMs !== undefined ? `${firstEventMs}ms` : 'none';
+            this.d.logAttempt?.(`[forge] Attempt ${this.attemptCount} result: agent=${agent} model=${configuredModel} outcome=${outcome} firstEventMs=${feStr} elapsedMs=${elapsedMs}ms`);
             return outcome;
           } catch (err) {
             const elapsedMs = Math.round(this.now() - t0);
             const errClass = classifyError(err);
             const reason = sanitizeReason(err);
-            this.d.logAttempt?.(`[forge] Attempt ${this.attemptCount} result: agent=${agent} model=${model} outcome=failed class=${errClass} elapsedMs=${elapsedMs} reason=${reason}`);
+            const feStr = firstEventMs !== undefined ? `${firstEventMs}ms` : 'none';
+            this.d.logAttempt?.(`[forge] Attempt ${this.attemptCount} result: agent=${agent} model=${configuredModel} outcome=failed class=${errClass} firstEventMs=${feStr} elapsedMs=${elapsedMs}ms reason=${reason}`);
             throw err;
           }
         },
@@ -366,6 +389,16 @@ export class AgentController {
       ui.metrics?.(metrics);
       this.d.onMetrics?.(metrics);
       this.d.logMetrics?.(metricsCollector.formatSummary(metrics));
+      const runTotalMs = Math.round(this.now() - runStartTime);
+      const turnsCount = metrics.modelTurns;
+      this.lastRunTimings = {
+        firstEventMs: this.runFirstEventMs,
+        totalMs: runTotalMs,
+        turns: turnsCount,
+      };
+      const feStr = this.runFirstEventMs !== undefined ? `${this.runFirstEventMs}ms` : 'none';
+      const timingsLog = `[forge] Run timings: firstEventMs=${feStr} totalMs=${runTotalMs}ms turns=${turnsCount}`;
+      this.d.logAttempt?.(timingsLog);
     }
   }
 
@@ -393,6 +426,7 @@ export class AgentController {
     countClientToolResponse?: () => number,
     metricsCollector?: RunMetricsCollector,
     primaryAgent?: string,
+    onAttemptInfo?: (info: { configuredModel: string; firstEventMs: number | undefined }) => void,
   ): Promise<'done' | 'cancelled'> {
     this.attemptCount++;
     this.d.approvals.cancelAll();
@@ -418,6 +452,23 @@ export class AgentController {
     }
 
     const client = this.d.getClient();
+    let configuredModel = model;
+    try {
+      if ((client as any)?.agents?.list) {
+        const serverModel = await getAgentModel(client, agent);
+        if (serverModel) configuredModel = serverModel;
+      }
+    } catch {
+      // server model lookup optional, fallback to model
+    }
+
+    const attemptStart = this.now();
+    let attemptFirstEventMs: number | undefined;
+    const notifyInfo = () => {
+      onAttemptInfo?.({ configuredModel, firstEventMs: attemptFirstEventMs });
+    };
+    notifyInfo();
+
     let sid = typeof this.d.sessionId === 'function' ? this.d.sessionId() : this.d.sessionId;
     if (!sid) {
       const { data: session } = await client.sessions.create({ agent: { name: agent } }, { abortSignal: this.abort.signal });
@@ -427,7 +478,7 @@ export class AgentController {
     this.sessionId = sid;
     ui.session?.(sid);
 
-    const attemptLog = `[forge] Attempt ${this.attemptCount}: session=${sid} agent=${agent} model=${model}`;
+    const attemptLog = `[forge] Attempt ${this.attemptCount}: session=${sid} agent=${agent} model=${configuredModel}`;
     this.d.logAttempt?.(attemptLog);
     this.d.logMetrics?.(attemptLog);
 
@@ -452,6 +503,15 @@ export class AgentController {
       metricsCollector?.recordModelTurn();
       let turnReadOnlyCalls = 0;
       const res = await runTurn(client, sid, input, {
+        onFirstEvent: () => {
+          if (attemptFirstEventMs === undefined) {
+            attemptFirstEventMs = Math.round(this.now() - attemptStart);
+            if (this.runFirstEventMs === undefined) {
+              this.runFirstEventMs = attemptFirstEventMs;
+            }
+            notifyInfo();
+          }
+        },
         onTextDelta: (id, t) => {
           metricsCollector?.recordTextDelta(t);
           this.handoffTracker.recordPlanText(t);

@@ -106,6 +106,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         outputChannel.appendLine(`Forge test providers error: ${err}`);
       }
     }),
+    vscode.commands.registerCommand('forge.showTimings', () => {
+      const timings = controller.getLastRunTimings();
+      if (!timings) {
+        void vscode.window.showInformationMessage('Forge: No runs recorded yet.');
+        return;
+      }
+      const feStr = timings.firstEventMs !== undefined ? `${timings.firstEventMs}ms` : 'none';
+      const msg = `Forge last run: first event: ${feStr}, total: ${timings.totalMs}ms, turns: ${timings.turns}`;
+      outputChannel.appendLine(`[forge] ${msg}`);
+      void vscode.window.showInformationMessage(msg);
+    }),
   );
 
   // Background provider check: notify if not ready, never block activation.

@@ -11,9 +11,16 @@ export class FakeTrueForge {
   cancelHooks: (() => void)[] = [];
   inputs: any[][] = [];
   private n = 0;
-  constructor(private scripts: Record<string, TurnScript[]>) {}
+  constructor(private scripts: Record<string, TurnScript[]>, public agentManifests?: Record<string, any>) {}
 
   client = {
+    agents: {
+      list: async ({ agentName }: { agentName: string }) => {
+        const manifest = this.agentManifests?.[agentName];
+        if (!manifest) return [];
+        return [{ id: `agent-${agentName}`, name: agentName, manifest }];
+      },
+    },
     sessions: {
       create: async ({ agent }: { agent: { name: string } }) => {
         const id = `s${++this.n}`;

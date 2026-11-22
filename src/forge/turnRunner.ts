@@ -20,6 +20,7 @@ export interface TurnHandlers {
   onTextDelta(messageId: string, text: string): void;
   onToolCall(name: string, call?: TrueForgeApi.ToolCall): void;
   onEventLine?(text: string): void;
+  onFirstEvent?(): void;
 }
 
 export interface WatchdogOptions {
@@ -98,8 +99,13 @@ export async function runTurn(
   try {
     const stream = await client.sessions.createTurnStream(sessionId, { input }, { abortSignal: effectiveSignal, maxRetries: 0, timeoutInSeconds: 600 });
 
+    let firstEventReported = false;
     for await (const { data: event } of stream.withMetadata()) {
       if (watchdogTriggered) break;
+      if (!firstEventReported) {
+        firstEventReported = true;
+        handlers.onFirstEvent?.();
+      }
       if (firstTokenTimer) {
         clearTimeout(firstTokenTimer);
         firstTokenTimer = undefined;

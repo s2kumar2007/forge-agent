@@ -283,6 +283,68 @@ describe('watchdog, failover budget, and model health', () => {
     expect(ui.notices.some((n) => n.includes('Primary unavailable, continuing on fallback (reusing 1 files already read)'))).toBe(true);
   });
 
+  it('diagnosis aid: logs server-configured model, firstEventMs, error class, and exposes run timings (STEP 4)', async () => {
+    const attemptsLogged: string[] = [];
+    const tf = new FakeTrueForge(
+      {
+        'forge-primary': [
+          () => {
+            // Fails immediately before any stream event
+            throw new Error('ECONNREFUSED 127.0.0.1:8790');
+          },
+        ],
+        'forge-fallback': [
+          () => [created(), delta('m1', 'Fallback answered'), done()],
+        ],
+      },
+      {
+        'forge-primary': { model: { name: 'server-custom/primary-model' } },
+        'forge-fallback': { model: { name: 'server-custom/fallback-model' } },
+      }
+    );
+
+    const ctl = new AgentController({
+      getClient: () => tf.client,
+      approvals: { decide: async () => ({ status: 'allow' as const }), cancelAll() {} },
+      agents: () => ({ primary: 'forge-primary', fallback: 'forge-fallback' }),
+      logAttempt: (line) => attemptsLogged.push(line),
+      sleep: async () => {},
+    });
+
+    const ui = new RecordingUi();
+    await ctl.run('diagnosis aid test', ui);
+
+    expect(ui.result?.status).toBe('done');
+    // Attempt 1: primary with server configured model and failed before first event
+    expect(attemptsLogged.some((l) =>
+      l.includes('agent=forge-primary') &&
+      l.includes('model=server-custom/primary-model') &&
+      l.includes('outcome=failed') &&
+      l.includes('class=network') &&
+      l.includes('firstEventMs=none')
+    )).toBe(true);
+
+    // Attempt 2: fallback with server configured model, succeeded with firstEventMs
+    expect(attemptsLogged.some((l) =>
+      l.includes('agent=forge-fallback') &&
+      l.includes('model=server-custom/fallback-model') &&
+      l.includes('outcome=done') &&
+      /firstEventMs=\d+ms/.test(l)
+    )).toBe(true);
+
+    // Run timings log
+    expect(attemptsLogged.some((l) =>
+      /\[forge\] Run timings: firstEventMs=\d+ms totalMs=\d+ms turns=2/.test(l)
+    )).toBe(true);
+
+    // Expose run timings via controller
+    const timings = ctl.getLastRunTimings();
+    expect(timings).toBeDefined();
+    expect(typeof timings?.firstEventMs).toBe('number');
+    expect(typeof timings?.totalMs).toBe('number');
+    expect(timings?.turns).toBe(2);
+  });
+
   describe('watchdog fake clock timers (STEP 1)', () => {
     afterEach(() => {
       vi.useRealTimers();

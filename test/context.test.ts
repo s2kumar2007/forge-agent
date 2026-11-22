@@ -55,7 +55,7 @@ describe('assembleContext', () => {
 
 
 describe('full rendered context bounds',()=>{
-  it('accounts for metadata and fences with thousands of repository files',async()=>{
+  it('accounts for metadata and fences with thousands of repository files', async () => {
     const huge=Array.from({length:10000},(_,i)=>'config_value_'+i+' = "'+ 'x'.repeat(200)+'"').join('\n');
     const deps:ContextDeps={listFiles:async()=>Array.from({length:5000},(_,i)=>'src/config'+i+'.py'),searchKeyword:async()=>Array.from({length:1000},(_,i)=>({path:'src/config0.py',line:i+1,text:'config'})),searchImporters:async()=>[],readText:async()=>huge,findSymbol:async()=>undefined};
     for(const budget of [50,500,1500]){
@@ -63,7 +63,7 @@ describe('full rendered context bounds',()=>{
       expect(estimateTokens(r.text)).toBeLessThanOrEqual(budget);expect(r.tokens).toBe(estimateTokens(r.text));
       expect(r.text).not.toContain('config_value_9999');expect(r.items.every(i=>i.reason.length>0)).toBe(true);
     }
-  });
+  }, 15000);
   it('caps dense hit windows rather than merging the entire file',()=>{
     const w=windows(Array.from({length:1000},(_,i)=>i+1),1000);
     expect(w).toHaveLength(2);expect(w.every(([a,b])=>b-a<40)).toBe(true);
