@@ -80,6 +80,26 @@ export function resetToolRunState(): void {
 
 export const resetToolDeduplication = resetToolRunState;
 
+export type ToolCompletionListener = (
+  name: string,
+  args: Record<string, unknown>,
+  result: ToolResult
+) => void;
+
+let toolCompletionListener: ToolCompletionListener | undefined;
+
+export function setToolCompletionListener(listener?: ToolCompletionListener): void {
+  toolCompletionListener = listener;
+}
+
+function notifyToolCompletion(name: string, args: Record<string, unknown>, res: ToolResult): void {
+  if (toolCompletionListener && !res.isError) {
+    try {
+      toolCompletionListener(name, args, res);
+    } catch {}
+  }
+}
+
 /** Registers the five editor tools. All paths are validated inside the workspace. */
 export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: ToolOptions): void {
   const root = api.root();
@@ -111,8 +131,11 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     readHashes.set(abs, hashContent(text));
     if (outline) {
       const symbols = extractOutline(text, rel).slice(0, 200);
-      if (symbols.length === 0) return ok(`${rel} outline: no definitions found.`);
-      return ok(`${rel} outline (${symbols.length} definition${symbols.length === 1 ? '' : 's'}):\n` + symbols.map((s) => `${s.kind} ${s.name} line ${s.line}`).join('\n'));
+      const res = symbols.length === 0
+        ? ok(`${rel} outline: no definitions found.`)
+        : ok(`${rel} outline (${symbols.length} definition${symbols.length === 1 ? '' : 's'}):\n` + symbols.map((s) => `${s.kind} ${s.name} line ${s.line}`).join('\n'));
+      notifyToolCompletion('read_file', { path, start, end, outline }, res);
+      return res;
     }
     if (Buffer.byteLength(text) > MAX_READ_BYTES && start === undefined) return fail('File is larger than 1MB; request a line range with start/end.');
     const lines = text.split('\n');
@@ -123,7 +146,9 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     if (requestedEnd - s + 1 > MAX_READ_LINES) return fail(`Read range is limited to ${MAX_READ_LINES} lines; requested ${requestedEnd - s + 1} lines. Request a smaller slice of at most 80 lines (e.g. start=560, end=639), use outline=true for definitions, or proceed directly to propose_write.`);
     const e = Math.min(requestedEnd, lines.length);
 
-    return ok(`${rel} lines ${s}-${e} of ${lines.length}`, lines.slice(s - 1, e).join('\n'));
+    const res = ok(`${rel} lines ${s}-${e} of ${lines.length}`, lines.slice(s - 1, e).join('\n'));
+    notifyToolCompletion('read_file', { path, start, end, outline }, res);
+    return res;
   }));
 
   mcp.registerTool('list_dir', {
@@ -141,7 +166,9 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     const entries = (await api.listDir(abs))
       .filter((e) => !isSecretPath(e.name))
       .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1));
-    return ok(entries.slice(0, 500).map((e) => e.name + (e.type === 'dir' ? '/' : '')).join('\n') || '(empty)');
+    const res = ok(entries.slice(0, 500).map((e) => e.name + (e.type === 'dir' ? '/' : '')).join('\n') || '(empty)');
+    notifyToolCompletion('list_dir', { path }, res);
+    return res;
   }));
 
   mcp.registerTool('search_workspace', {
@@ -156,7 +183,11 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     if (kind === 'symbol') {
       const rawHits = (await api.searchSymbols(query, 100)).filter((s) => !isSecretPath(s.path));
       const ranked = rankSymbols(rawHits, query, max_results);
-      if (ranked.length === 0) return ok('No symbols found.');
+      if (ranked.length === 0) {
+        const res = ok('No symbols found.');
+        notifyToolCompletion('search_workspace', { query, kind, max_results }, res);
+        return res;
+      }
       const fileTextCache = new Map<string, string[] | undefined>();
       const getLines = async (relPath: string): Promise<string[] | undefined> => {
         if (fileTextCache.has(relPath)) return fileTextCache.get(relPath);
@@ -186,11 +217,15 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
         }
         return hitText;
       }));
-      return ok(formatted.join('\n'));
+      const res = ok(formatted.join('\n'));
+      notifyToolCompletion('search_workspace', { query, kind, max_results }, res);
+      return res;
     }
     const rawHits = (await api.searchText(query, 500)).filter((h) => !isSecretPath(h.path));
     const ranked = rankTextHits(rawHits, query, max_results);
-    return ok(ranked.map((h) => `${h.path}:${h.line}  ${h.text.trim()}  -- why: ${h.why}`).join('\n') || 'No matches.');
+    const res = ok(ranked.map((h) => `${h.path}:${h.line}  ${h.text.trim()}  -- why: ${h.why}`).join('\n') || 'No matches.');
+    notifyToolCompletion('search_workspace', { query, kind, max_results }, res);
+    return res;
   }));
 
   mcp.registerTool('propose_write', {
@@ -230,7 +265,9 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     }
     const candidate = materializeWrite(current, args);
     const res = await api.applyProposal(abs, candidate);
-    return ok(res);
+    const toolRes = ok(res);
+    notifyToolCompletion('propose_write', args, toolRes);
+    return toolRes;
   })));
 
   mcp.registerTool('run_command', {
@@ -287,7 +324,9 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
         const res = await api.applyProposal(abs, candidate);
         results.push(`${toRel(root, abs)}: ${res}`);
       }
-      return ok(`Applied changes to ${results.length} file(s):\n${results.join('\n')}`);
+      const toolRes = ok(`Applied changes to ${results.length} file(s):\n${results.join('\n')}`);
+      notifyToolCompletion('propose_changes', args, toolRes);
+      return toolRes;
     })));
 
   mcp.registerTool('search_symbols', {
@@ -301,7 +340,11 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
     if (budgetError) return budgetError;
     const rawHits = (await api.searchSymbols(query, 100)).filter((s) => !isSecretPath(s.path));
     const ranked = rankSymbols(rawHits, query, max_results);
-    if (ranked.length === 0) return ok('No symbols found.');
+    if (ranked.length === 0) {
+      const res = ok('No symbols found.');
+      notifyToolCompletion('search_symbols', { query, max_results }, res);
+      return res;
+    }
     const formatted = await Promise.all(ranked.map(async (s) => {
       let hitText = `${s.path}:${s.line}  ${s.kind} ${s.name}  -- why: ${s.why}`;
       try {
@@ -321,7 +364,9 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
       } catch {}
       return hitText;
     }));
-    return ok(formatted.join('\n'));
+    const res = ok(formatted.join('\n'));
+    notifyToolCompletion('search_symbols', { query, max_results }, res);
+    return res;
   }));
 
   mcp.registerTool('find_references', {
@@ -348,8 +393,14 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
       const raw = await api.searchText(symbol, max_results);
       hits = raw.filter((h) => !isSecretPath(h.path));
     }
-    if (hits.length === 0) return ok('No references found.');
-    return ok(hits.map((h) => `${h.path}:${h.line}  ${h.text}`).join('\n'));
+    if (hits.length === 0) {
+      const res = ok('No references found.');
+      notifyToolCompletion('find_references', { path, line, symbol, max_results }, res);
+      return res;
+    }
+    const res = ok(hits.map((h) => `${h.path}:${h.line}  ${h.text}`).join('\n'));
+    notifyToolCompletion('find_references', { path, line, symbol, max_results }, res);
+    return res;
   }));
 
   mcp.registerTool('get_diagnostics', {
@@ -370,10 +421,20 @@ export function registerEditorTools(mcp: McpServer, api: EditorApi, options?: To
       abs = await resolveInsideReal(root, path);
       if (isSecretPath(toRel(root, abs))) return fail('blocked: secret-like file');
     }
-    if (!api.getDiagnostics) return ok('No diagnostics found (clean).');
+    if (!api.getDiagnostics) {
+      const res = ok('No diagnostics found (clean).');
+      notifyToolCompletion('get_diagnostics', { path, severity }, res);
+      return res;
+    }
     const diags = await api.getDiagnostics(abs, severity);
-    if (diags.length === 0) return ok('No diagnostics found (clean).');
-    return ok(diags.map((d) => `[${d.severity.toUpperCase()}] ${d.path}:${d.line}:${d.column} - ${d.message}${d.source ? ` (${d.source})` : ''}`).join('\n'));
+    if (diags.length === 0) {
+      const res = ok('No diagnostics found (clean).');
+      notifyToolCompletion('get_diagnostics', { path, severity }, res);
+      return res;
+    }
+    const res = ok(diags.map((d) => `[${d.severity.toUpperCase()}] ${d.path}:${d.line}:${d.column} - ${d.message}${d.source ? ` (${d.source})` : ''}`).join('\n'));
+    notifyToolCompletion('get_diagnostics', { path, severity }, res);
+    return res;
   }));
 
   mcp.registerTool('run_tests', {

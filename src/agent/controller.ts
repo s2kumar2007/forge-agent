@@ -5,6 +5,8 @@ import { CancelledError, ForgeFailure, IterationLimitError, isIterationLimitErro
 import { RunMetricsCollector, type RunMetrics } from '../metrics';
 import { computeHunks } from '../review/hunks';
 import { computeChangeConfidence } from '../review/confidence';
+import { HandoffTracker } from './handoff';
+import { setToolCompletionListener } from '../mcp/tools';
 
 function isAuthenticationFailure(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -52,6 +54,7 @@ export interface ControllerDeps {
   faultInjection?: string | boolean;
   verifyAndRepair?: () => Promise<{ ok: boolean; errors?: string }>;
   maxRepairRounds?: number;
+  fallbackContextBudget?: number;
 }
 
 export function sanitizeReason(err: unknown): string {
@@ -92,6 +95,7 @@ export class AgentController {
   private approvedOperations = 0;
   private primaryUnhealthyUntil = 0;
   private primaryUnavailableNoticeShown = false;
+  private handoffTracker = new HandoffTracker();
   private readonly circuitBreakerDurationMs: number;
   private readonly now: () => number;
 
@@ -101,6 +105,10 @@ export class AgentController {
   }
 
   get busy(): boolean { return this.running; }
+
+  getHandoffTracker(): HandoffTracker {
+    return this.handoffTracker;
+  }
 
   isPrimaryHealthy(): boolean {
     return this.now() >= this.primaryUnhealthyUntil;
@@ -122,6 +130,12 @@ export class AgentController {
     this.cancelled = false;
     this.abort = new AbortController();
     this.approvedOperations = 0;
+    this.handoffTracker = new HandoffTracker(request);
+    setToolCompletionListener((name, args, res) => {
+      if (res.isError) return;
+      const text = res.content.map((c) => c.text).join('\n').trim();
+      this.handoffTracker.recordReadOnlyCall(name, args, text);
+    });
     let clientToolResponses = 0;
     this.d.onRunStart?.();
     const cfg = this.d.agents();
@@ -169,6 +183,8 @@ export class AgentController {
           }
           const model = sanitizeReason(new Error(cfg.fallbackModel ?? cfg.fallback ?? 'fallback'));
           ui.notice(`Primary model failed, using fallback: ${model}`);
+          const filesCount = this.handoffTracker.getUniqueFilesCount();
+          ui.notice(`Primary unavailable, continuing on fallback (reusing ${filesCount} files already read)`);
         },
       });
       if (chosenPrimary === primaryAgent && !primaryFailed && outcome === 'done') {
@@ -198,6 +214,7 @@ export class AgentController {
         ui.finished({ status: 'error', message: `${base}${suffix}` });
       }
     } finally {
+      setToolCompletionListener(undefined);
       this.d.approvals.cancelAll();
       this.running = false;
       this.sessionId = undefined;
@@ -266,7 +283,13 @@ export class AgentController {
     ui.session?.(sid);
     if (this.cancelled) { await client.sessions.cancel(sid, {}).catch(() => {}); return 'cancelled'; }
 
-    const messageContent = rebuildRequest ? await rebuildRequest(agent) : request;
+    let messageContent = rebuildRequest ? await rebuildRequest(agent) : request;
+    const isFallback = agent === this.d.agents().fallback;
+    if (isFallback && this.handoffTracker.hasData()) {
+      const fallbackBudget = this.d.fallbackContextBudget ?? 1200;
+      const brief = this.handoffTracker.buildHandoffBrief({ maxTokens: fallbackBudget });
+      messageContent = `${brief}\n\n${messageContent}`;
+    }
     let input: TrueForgeApi.TurnInputItem[] = [{ type: 'user.message', content: messageContent }];
     let hadToolCalls = false;
     let hadProposeWrite = false;
@@ -281,12 +304,31 @@ export class AgentController {
       const res = await runTurn(client, sid, input, {
         onTextDelta: (id, t) => {
           metricsCollector?.recordTextDelta(t);
+          this.handoffTracker.recordPlanText(t);
           ui.textDelta(id, t);
         },
         onEventLine: (line) => ui.eventLine?.(line),
-        onToolCall: (n) => {
+        onToolCall: (n, tc) => {
           hadToolCalls = true;
           metricsCollector?.recordToolStart(n);
+          if (tc?.function?.arguments) {
+            try {
+              const parsed = JSON.parse(tc.function.arguments);
+              if (parsed && typeof parsed === 'object') {
+                if (n === 'propose_write' || n === 'propose_changes') {
+                  this.handoffTracker.recordPendingDiff({
+                    path: typeof parsed.path === 'string' ? parsed.path : '',
+                    rationale: typeof parsed.rationale === 'string' ? parsed.rationale : undefined,
+                    edits: Array.isArray(parsed.edits) ? parsed.edits : undefined,
+                    new_content: typeof parsed.new_content === 'string' ? parsed.new_content : undefined,
+                    changes: Array.isArray(parsed.changes) ? parsed.changes : undefined,
+                  });
+                } else {
+                  this.handoffTracker.recordReadOnlyCall(n, parsed, '');
+                }
+              }
+            } catch {}
+          }
           if (n === 'propose_write' || n === 'propose_changes') hadProposeWrite = true;
           if (!isMutatingTool(n)) {
             turnReadOnlyCalls++;
@@ -348,6 +390,12 @@ export class AgentController {
           if (info?.name === 'propose_write' || info?.name === 'propose_changes') {
             hadProposeWrite = true;
             if (info.name === 'propose_write' && typeof info.args.path === 'string') {
+              this.handoffTracker.recordPendingDiff({
+                path: info.args.path,
+                rationale: typeof info.args.rationale === 'string' ? info.args.rationale : undefined,
+                edits: Array.isArray(info.args.edits) ? info.args.edits : undefined,
+                new_content: typeof info.args.new_content === 'string' ? info.args.new_content : undefined,
+              });
               let conf: { tag: string; score: number } | undefined;
               try {
                 if (typeof info.args.old_text === 'string' && typeof info.args.new_text === 'string') {
@@ -361,6 +409,11 @@ export class AgentController {
                 confidence: conf,
               });
             } else if (info.name === 'propose_changes' && Array.isArray(info.args.changes)) {
+              this.handoffTracker.recordPendingDiff({
+                path: '',
+                rationale: typeof info.args.rationale === 'string' ? info.args.rationale : undefined,
+                changes: info.args.changes,
+              });
               for (const ch of info.args.changes) {
                 if (ch && typeof ch.path === 'string') {
                   let conf: { tag: string; score: number } | undefined;

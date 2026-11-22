@@ -18,7 +18,7 @@ export interface TurnResult {
 
 export interface TurnHandlers {
   onTextDelta(messageId: string, text: string): void;
-  onToolCall(name: string): void;
+  onToolCall(name: string, call?: TrueForgeApi.ToolCall): void;
   onEventLine?(text: string): void;
 }
 
@@ -41,7 +41,7 @@ export async function runTurn(
   const reported = new Set<string>();
   const reportTools = (message: TrueForgeApi.ModelMessageEvent) => {
     for (const call of message.toolCalls ?? []) if (!reported.has(call.id)) {
-      reported.add(call.id); handlers.onToolCall(toolName(call));
+      reported.add(call.id); handlers.onToolCall(toolName(call), call);
     }
   };
   const stream = await client.sessions.createTurnStream(sessionId, { input }, { abortSignal: signal, maxRetries: 0, timeoutInSeconds: 600 });

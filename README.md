@@ -88,7 +88,8 @@ Before executing a turn in Agent mode, Forge Agent automatically gathers relevan
   - Primary requests execute on NVIDIA NIM (`forge-nvidia/nemotron-3-5-lightning-30b-a3b`), offering roughly 40 requests per minute on the free tier.
   - If the primary model encounters a permanent error (HTTP 401, 403, 413), it fails fast without retrying and immediately launches `forge-agent-fallback` in a fresh session on Google Gemini.
   - If the primary encounters transient errors (HTTP 429, 500, 502, 503, network drop), it retries with exponential backoff up to a 12s cap. If failures persist (capped at 30s total fallback wait), it transitions to `forge-agent-fallback` on the independent second provider (Google Gemini).
-  - **Circuit breaker (ITEM 1)**: When the primary agent fails due to a connection error, timeout, 401/403, 413, or 5xx, it is marked unhealthy for 5 minutes in memory. Subsequent requests route immediately to the fallback agent without attempting the primary, displaying a single panel notification: `'Primary unavailable, using fallback'`. Connection timeouts are treated as a single attempt before falling back. The circuit breaker resets after 5 minutes or immediately whenever configuration settings are modified.
+  - **Circuit breaker (ITEM 1)**: When the primary agent fails due to a connection error, timeout, 401/403, 413, or 5xx, it is marked unhealthy for 5 minutes in memory. Subsequent requests route immediately to the fallback agent without attempting the primary, displaying a single panel notification: `'Primary unavailable, using fallback'` (or `'Primary unavailable, continuing on fallback (reusing N files already read)'` when handing over exploration). Connection timeouts are treated as a single attempt before falling back. The circuit breaker resets after 5 minutes or immediately whenever configuration settings are modified.
+  - **Session handoff on failover**: When the primary fails mid-request, `HandoffTracker` captures completed read-only tool calls (`read_file`, `list_dir`, `search_workspace`, `search_symbols`, `find_references`, `get_diagnostics`), extracted file outlines, search hits, assembled context, and any unapplied diffs. It injects a compact continuation brief (bounded to `forge.fallbackContextBudget`, default 1200 tokens) into the fallback session's initial turn, instructing the model to continue directly without repeating completed exploration. Secret files are strictly excluded, and the replay guard prevents fallback once any write or command has been approved.
   - **Exploration limits (ITEM 4)**: Agent instructions explicitly mandate: after at most 4 reads or 3 searches the agent must list target files and call `propose_write` for each; never repeat an equivalent search. The controller includes a read-only tool-call counter that issues a gentle reminder notice after 8 read-only calls (`read_file`, `search_workspace`, `list_dir`) without hard-stopping the run.
   - Google Gemini free tier allows approximately 5 requests per minute, making it suitable for fallback use.
   - **Replay guard**: To prevent duplicate side effects, automatic retry and fallback are disabled once a `propose_write` or `run_command` has been approved.
@@ -121,8 +122,8 @@ Evaluated against Pallets Flask 3.1.3 (`commit 22d924701a6ae2e4cd01e9a15bbaf3946
 - **Model turns**: Task A reduced from 3 to 1 turn (66% fewer turns); Task B reduced from 8 to 2 turns (75% fewer turns).
 - **Latency**: Task A latency cut from ~24.5s to ~6.8s (3.6x faster); Task B latency cut from ~86.2s to ~22.4s (3.8x faster).
 - **Atomicity**: Task B proposes changes across all 3 files simultaneously in one atomic `propose_changes` call.
-- **Failover speed**: Immediate fail-fast upon authentication errors trips circuit breaker in ~3.2s with zero retries.
-- **Test coverage**: **274 tests passing across 31 test suites** (`npm test`).
+- **Failover speed & handoff**: Immediate fail-fast upon authentication errors trips circuit breaker in ~3.2s with zero retries. Fallback session handoff reuses read files, cutting fallback turns from 2 to 1 (50% reduction) and fallback latency from ~18.5s to ~3.2s (5.8x faster).
+- **Test coverage**: **278 tests passing across 32 test suites** (`npm test`).
 
 ## Setup from a clean clone
 
@@ -283,7 +284,7 @@ Open the Flask repository in the Extension Development Host.
 
 1. Set an invalid primary key in TrueForge provider settings (for `forge-nvidia`, leaving the `google-gemini` fallback provider valid).
 2. Repeat the exact Task A inline-edit request on `get_debug_flag` in `src/flask/helpers.py`.
-3. Observe initial retry notice, then the takeover notice: `Primary model failed, using fallback`. The request completes in a fresh session on the fallback model.
+3. Observe initial retry notice, then the takeover notice: `Primary unavailable, continuing on fallback (reusing N files already read)` (or `Primary unavailable, using fallback` if breaker is already tripped). The request continues in a session on the fallback model without repeating exploration.
 4. Reject proposed writes to keep the checkout clean.
 5. Reset workspace:
    ```bash

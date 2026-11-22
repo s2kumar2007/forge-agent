@@ -49,6 +49,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     getClient: () => createClient(getConfig().baseUrl),
     approvals,
     agents: () => ({ primary: getConfig().agentName, fallback: getConfig().fallbackAgentName, fallbackModel: getConfig().fallbackModel ?? fallbackModel }),
+    fallbackContextBudget: getConfig().fallbackContextBudget,
     onRunStart: () => { api?.beginRun(); resetToolRunState(); },
     onCancel: () => { store.clear(); api?.cancelCommands(); },
     logError: (err) => { outputChannel.appendLine(err instanceof Error ? (err.stack ?? err.message) : String(err)); },
