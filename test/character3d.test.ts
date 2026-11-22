@@ -250,9 +250,17 @@ describe('CharacterApp Webview Mode & Accessibility Controller', () => {
     };
   });
 
-  it('starts in Off mode by default and collapses dock', () => {
-    (global as any).window.__FORGE_INITIAL_CONFIG__ = { guideCharacter3d: false };
+  it('starts in 2D mode by default', () => {
     const app = new CharacterApp();
+
+    expect(app.getMode()).toBe('2D');
+    expect(mockDom['forge-character-svg'].style.display).toBe('block');
+    expect(mockDom['forge-character-canvas'].style.display).toBe('none');
+  });
+
+  it('switches to Off mode and collapses dock', () => {
+    const app = new CharacterApp();
+    app.setMode('Off', true);
 
     expect(app.getMode()).toBe('Off');
     expect(mockDom['forge-character-canvas'].style.display).toBe('none');

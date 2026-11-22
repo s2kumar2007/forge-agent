@@ -57,12 +57,14 @@ export class CharacterApp {
     this.themeButtons = document.querySelectorAll('.theme-switch .theme-btn');
     this.themeHcNotice = document.getElementById('theme-high-contrast-notice');
 
-    // Determine initial character mode: sessionStorage > config setting
-    let initialMode: CharacterMode = window.__FORGE_INITIAL_CONFIG__?.guideCharacter3d ? '3D' : 'Off';
+    // Determine initial character mode: sessionStorage > config setting (defaults to '2D')
+    let initialMode: CharacterMode = '2D';
     try {
       const saved = sessionStorage.getItem('forge.characterMode');
       if (saved === '3D' || saved === '2D' || saved === 'Off') {
         initialMode = saved;
+      } else if (window.__FORGE_INITIAL_CONFIG__?.guideCharacter3d) {
+        initialMode = '3D';
       }
     } catch {}
 
@@ -85,6 +87,31 @@ export class CharacterApp {
   }
 
   private bindEvents(): void {
+    // Mascot settings dropdown menu
+    const menuBtn = document.getElementById('mascot-menu-btn');
+    const menuDropdown = document.getElementById('mascot-menu-dropdown');
+    if (menuBtn && menuDropdown) {
+      menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = menuDropdown.style.display === 'block';
+        menuDropdown.style.display = isOpen ? 'none' : 'block';
+        menuBtn.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+      });
+      document.addEventListener('click', (e) => {
+        if (!menuDropdown.contains(e.target as Node) && e.target !== menuBtn) {
+          menuDropdown.style.display = 'none';
+          menuBtn.setAttribute('aria-expanded', 'false');
+        }
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && menuDropdown.style.display === 'block') {
+          menuDropdown.style.display = 'none';
+          menuBtn.setAttribute('aria-expanded', 'false');
+          menuBtn.focus();
+        }
+      });
+    }
+
     // Mode toggle buttons (3D / 2D / Off)
     if (this.modeButtons) {
       this.modeButtons.forEach((btn: HTMLButtonElement) => {
@@ -307,8 +334,8 @@ export class CharacterApp {
         try {
           this.char3d = new ForgeCharacter3D({
             canvas: this.canvas,
-            width: 160,
-            height: 160,
+            width: this.canvas.width || 28,
+            height: this.canvas.height || 28,
             onFallback: (reason) => {
               console.warn(`[Forge Character] Fallback to 2D: ${reason}`);
               this.setMode('2D', true);

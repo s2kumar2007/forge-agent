@@ -116,12 +116,31 @@ export class ChatPanel {
 <link rel="stylesheet" href="${css}"></head><body>
 <header id="header">
   <div class="header-left">
-    <img class="header-logo" src="${logo}" alt="Forge Agent logo" width="24" height="24">
+    <div id="forge-character-dock" class="character-dock header-mascot-dock" aria-label="Forge Mascot">
+      <div id="character-speech-bubble" class="character-speech" style="display:none;" aria-hidden="true"></div>
+      <div class="character-viewport">
+        <canvas id="forge-character-canvas" width="28" height="28" aria-label="3D Forge character" role="img" style="display:none;"></canvas>
+        <div id="forge-character-svg" class="character-2d" aria-label="2D Forge avatar" role="img"></div>
+      </div>
+    </div>
     <div class="header-titles">
       <div class="header-title">Forge Agent</div>
     </div>
   </div>
   <div class="header-right">
+    <div class="mascot-menu-container">
+      <button id="mascot-menu-btn" class="header-icon-btn" type="button" aria-label="Mascot settings" title="Mascot mode (2D / 3D / Off)" aria-haspopup="true" aria-expanded="false">
+        <span aria-hidden="true">&#9881;</span>
+      </button>
+      <div id="mascot-menu-dropdown" class="mascot-dropdown" role="menu" style="display:none;">
+        <div class="mascot-dropdown-title">Mascot Display</div>
+        <div class="character-mode-toggle" role="radiogroup" aria-label="Character display mode">
+          <button type="button" class="mode-btn" data-mode="3D" role="radio" aria-checked="false" tabindex="0">3D</button>
+          <button type="button" class="mode-btn active" data-mode="2D" role="radio" aria-checked="true" tabindex="0">2D</button>
+          <button type="button" class="mode-btn" data-mode="Off" role="radio" aria-checked="false" tabindex="0">Off</button>
+        </div>
+      </div>
+    </div>
     <div id="theme-switch" class="theme-switch" role="radiogroup" aria-label="Theme mode">
       <button type="button" class="theme-btn active" data-theme="auto" role="radio" aria-checked="true" tabindex="0" title="Auto (follow VS Code)">
         <span class="theme-icon" aria-hidden="true">&#9680;</span>
@@ -142,6 +161,7 @@ export class ChatPanel {
       <span id="status-text">forge-nvidia / nemotron-3.5</span>
     </div>
   </div>
+  <div id="character-aria-live" aria-live="polite" class="sr-only">Forge is idle and ready</div>
 </header>
 <div id="timeline" class="timeline">
   <div class="timeline-step" id="step-context">Context</div>
@@ -159,13 +179,13 @@ export class ChatPanel {
 </div>
 <div id="log"></div>
 <div id="ac"></div>
-<div id="chips">
-  <button class="chip" data-prompt="Add a new built-in CLI command flask config that prints configuration as JSON, masking secret keys">flask config CLI</button>
-  <button class="chip" data-prompt="Refactor get_debug_flag in src/flask/helpers.py to support off and n">inline get_debug_flag</button>
-  <button class="chip" data-prompt="Run test suite and fix any failing tests">run tests</button>
-  <button class="chip" data-prompt="Get compiler and linter diagnostics for workspace">diagnostics</button>
-</div>
 <div id="ask-forge-container">
+  <div id="chips">
+    <button class="chip" data-prompt="Add a new built-in CLI command flask config that prints configuration as JSON, masking secret keys">flask config CLI</button>
+    <button class="chip" data-prompt="Refactor get_debug_flag in src/flask/helpers.py to support off and n">inline get_debug_flag</button>
+    <button class="chip" data-prompt="Run test suite and fix any failing tests">run tests</button>
+    <button class="chip" data-prompt="Get compiler and linter diagnostics for workspace">diagnostics</button>
+  </div>
   <div id="bar">
     <textarea id="input" rows="3" placeholder="Ask Forge... (Ctrl+Enter to send, @ to mention files)"></textarea>
     <div id="bar-buttons">
@@ -173,21 +193,6 @@ export class ChatPanel {
       <button id="stop" disabled>Stop</button>
     </div>
   </div>
-  <aside id="forge-character-dock" aria-label="Forge Assistant Guide" class="character-dock ${guide3d ? '' : 'collapsed'}">
-    <div id="character-speech-bubble" class="character-speech" style="display:none;" aria-hidden="true"></div>
-    <div class="character-viewport">
-      <canvas id="forge-character-canvas" width="160" height="160" aria-label="3D Forge character" role="img" style="${guide3d ? 'display:block;' : 'display:none;'}"></canvas>
-      <div id="forge-character-svg" class="character-2d" style="display:none;" aria-label="2D Forge avatar" role="img"></div>
-    </div>
-    <div class="character-controls">
-      <div class="character-mode-toggle" role="radiogroup" aria-label="Character display mode">
-        <button type="button" class="mode-btn ${guide3d ? 'active' : ''}" data-mode="3D" role="radio" aria-checked="${guide3d ? 'true' : 'false'}" tabindex="0">3D</button>
-        <button type="button" class="mode-btn" data-mode="2D" role="radio" aria-checked="false" tabindex="0">2D</button>
-        <button type="button" class="mode-btn ${guide3d ? '' : 'active'}" data-mode="Off" role="radio" aria-checked="${guide3d ? 'false' : 'true'}" tabindex="0">Off</button>
-      </div>
-    </div>
-    <div id="character-aria-live" aria-live="polite" class="sr-only">Forge is idle and ready</div>
-  </aside>
 </div>
 <footer id="footer">
   <div id="metrics-footer">Ready</div>
