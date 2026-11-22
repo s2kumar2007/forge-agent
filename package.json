@@ -57,6 +57,34 @@
           "default": "google-gemini/gemini-3-8-flash",
           "description": "Configurable model identifier for the fallback provider."
         },
+        "forge.fallbackModels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "google-gemini/gemini-3-8-flash"
+          ],
+          "description": "Ordered list of fallback models to try when the primary model fails or is overloaded."
+        },
+        "forge.firstTokenTimeoutMs": {
+          "type": "number",
+          "default": 25000,
+          "minimum": 1000,
+          "description": "Timeout in milliseconds waiting for the first token before cancelling and failing over."
+        },
+        "forge.stallTimeoutMs": {
+          "type": "number",
+          "default": 20000,
+          "minimum": 1000,
+          "description": "Timeout in milliseconds without any stream events before cancelling and failing over."
+        },
+        "forge.failoverBudgetMs": {
+          "type": "number",
+          "default": 45000,
+          "minimum": 5000,
+          "description": "Total failover time budget in milliseconds across all retries and model switches."
+        },
         "forge.contextBudget": {
           "type": "number",
           "default": 2000,

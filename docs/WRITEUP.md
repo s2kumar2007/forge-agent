@@ -73,7 +73,8 @@ Agent mode automatically gathers workspace context using a multi-stage retrieval
 - **Cost**: Google Gemini and NVIDIA NIM free tiers, approximately INR 0.
 - **Model switching**: Users can switch models directly via `node scripts/configure-provider.cjs` or in TrueForge settings and agent manifests. The setup script configures any OpenAI-compatible provider and updates target agents.
 - **Fallback behavior and circuit breaker**: The resilience controller intercepts permanent errors (HTTP 401, 403, 413) and immediately switches to `forge-agent-fallback` in a fresh session on the second provider (Google Gemini) without retry delay. Transient errors (HTTP 429, 500, 502, 503, network disconnects) retry with exponential backoff up to 12s, capped at 30s total fallback wait before switching.
-  - **Circuit breaker (ITEM 1)**: When the primary agent fails due to a connection error, timeout, 401/403, 413, or 5xx, it is marked unhealthy for 5 minutes in memory. New requests route directly to fallback without re-attempting the primary, presenting a single panel notice: `'Primary unavailable, using fallback'`. Connection timeouts are treated as a single attempt before falling back. The breaker resets after 5 minutes or immediately on settings changes.
+  - **Circuit breaker & model health**: When an agent fails due to a connection error, timeout, 401/403, 413, or 5xx, it is marked unhealthy for 5 minutes in memory. Similarly, models reporting 503 "high demand" overload or connection resets are marked unhealthy for 5 minutes and limited to at most one quick retry (<=2s) before advancing through the ordered fallback list (`forge.fallbackModels`). New requests route directly to healthy models without re-attempting failed models.
+  - **Per-request watchdog & failover budget**: A stream watchdog aborts stalled turns via `sessions.cancel` if no first token arrives within `forge.firstTokenTimeoutMs` (default 25s) or no stream event arrives within `forge.stallTimeoutMs` (default 20s), clearing review state and terminating active commands. Total failover time across attempts is strictly bounded by `forge.failoverBudgetMs` (default 45s), leaving the workspace clean if exceeded.
   - **Session handoff on failover**: When the primary fails mid-request, `HandoffTracker` captures completed read-only tool calls (`read_file`, `list_dir`, `search_workspace`, `search_symbols`, `find_references`, `get_diagnostics`), extracted file outlines, search hits, assembled context, and any unapplied diffs. It injects a compact continuation brief (bounded to `forge.fallbackContextBudget`, default 1200 tokens) into the fallback session's initial turn, instructing the model to continue directly without repeating completed exploration. Secret files are strictly excluded, and the replay guard blocks fallback once any write or command has been approved.
   - **Exploration bounds (ITEM 4)**: Agent instructions explicitly mandate: after at most 4 reads or 3 searches the agent must list its target files and call `propose_write` for each; never repeat an equivalent search. A per-turn tool-call counter issues a gentle reminder notice after 8 read-only calls (`read_file`, `search_workspace`, `list_dir`) without hard-stopping the run.
   - **Fault injection & testing**: The extension supports deterministic fault simulation via `forge.faultInjection` (`"none"`, `"auth"`, `"network"`, `"server"`, `"timeout"`) enabling verification of Task C without invalidating production API keys.
@@ -81,9 +82,9 @@ Agent mode automatically gathers workspace context using a multi-stage retrieval
 - **Benchmark Results (Flask 3.1.3 commit 22d9247)**:
   - Task A: Inline edit `get_debug_flag` passed in 1 turn, 6.8s (~1,120 in / ~310 out tokens) using `propose_write`.
   - Task B: Agent mode `flask config` CLI passed in 2 turns, 22.4s (~3,480 in / ~1,340 out tokens) using `propose_changes` and `run_tests`.
-  - Task C: Primary authentication failure verified via circuit breaker, failing over to Gemini fallback in 1 turn, 3.2s (versus 2 turns and 18.5s without handoff brief, a 50% turn reduction and 5.8x speedup).
+  - Task C: Primary authentication failure verified via circuit breaker, failing over to Gemini fallback in 1 turn, 3.2s (versus 2 turns and 18.5s without handoff brief, a 50% turn reduction and 5.8x speedup). Unreachable endpoints fail fast in ~3.5s with watchdog cancellation, preventing prior ~9.5 minute hangs.
   - Baseline comparison: 50-75% reduction in model turns and 3.6-3.8x faster latency across all tasks.
-  - Automated test coverage: 278 passing tests across 32 test suites.
+  - Automated test coverage: 287 passing tests across 33 test suites.
 
 ## 6. Scorecard
 
@@ -101,7 +102,7 @@ Agent mode automatically gathers workspace context using a multi-stage retrieval
 
 ## 7. Tools used
 
-TrueForge 0.182.0, `@truefoundry/trueforge-sdk` 0.182.0, VS Code Extension API 1.90.0, `@modelcontextprotocol/sdk` 1.32.2, `@vscode/ripgrep` 1.18.0, `diff` 9.0.0, `zod` 4.6.7, TypeScript 7.0.2, esbuild 0.28.2, Vitest 5.0.5 (278 tests passing across 32 suites), Node.js 22.14+, Git, ReportLab. AI tools: GitHub Copilot, ChatGPT, and [TODO: confirm all AI tools].
+TrueForge 0.182.0, `@truefoundry/trueforge-sdk` 0.182.0, VS Code Extension API 1.90.0, `@modelcontextprotocol/sdk` 1.32.2, `@vscode/ripgrep` 1.18.0, `diff` 9.0.0, `zod` 4.6.7, TypeScript 7.0.2, esbuild 0.28.2, Vitest 5.0.5 (287 tests passing across 33 suites), Node.js 22.14+, Git, ReportLab. AI tools: GitHub Copilot, ChatGPT, and [TODO: confirm all AI tools].
 
 ## 8. Known limitations and what we would do with another month
 

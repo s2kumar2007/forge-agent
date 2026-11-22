@@ -22,6 +22,12 @@ export interface TurnHandlers {
   onEventLine?(text: string): void;
 }
 
+export interface WatchdogOptions {
+  firstTokenTimeoutMs?: number;
+  stallTimeoutMs?: number;
+  onStall?: () => Promise<void> | void;
+}
+
 /**
  * Streams ONE turn. Contract: opens with turn.created, closes with turn.done. A cancel
  * ends the stream by itself (we never `break` the loop). A gated tool call ends the turn
@@ -34,6 +40,7 @@ export async function runTurn(
   input: TrueForgeApi.TurnInputItem[],
   handlers: TurnHandlers,
   signal?: AbortSignal,
+  watchdog?: WatchdogOptions,
 ): Promise<TurnResult> {
   const events: TurnEvents = new Map();
   const result: TurnResult = { events, status: 'unknown', approvals: [], toolResponses: [] };
@@ -44,10 +51,65 @@ export async function runTurn(
       reported.add(call.id); handlers.onToolCall(toolName(call), call);
     }
   };
-  const stream = await client.sessions.createTurnStream(sessionId, { input }, { abortSignal: signal, maxRetries: 0, timeoutInSeconds: 600 });
 
-  for await (const { data: event } of stream.withMetadata()) {
-    if (!event || typeof event !== 'object' || typeof event.type !== 'string' || typeof event.id !== 'string') throw new Error('TrueForge sent an invalid event.');
+  let firstTokenTimer: NodeJS.Timeout | undefined;
+  let stallTimer: NodeJS.Timeout | undefined;
+  let watchdogTriggered = false;
+  let watchdogReason: string | undefined;
+
+  const watchdogAbort = new AbortController();
+  const effectiveSignal = signal
+    ? AbortSignal.any([signal, watchdogAbort.signal])
+    : watchdogAbort.signal;
+
+  const clearTimers = () => {
+    if (firstTokenTimer) { clearTimeout(firstTokenTimer); firstTokenTimer = undefined; }
+    if (stallTimer) { clearTimeout(stallTimer); stallTimer = undefined; }
+  };
+
+  const triggerWatchdog = (reason: string) => {
+    if (watchdogTriggered) return;
+    watchdogTriggered = true;
+    watchdogReason = reason;
+    clearTimers();
+    try {
+      void watchdog?.onStall?.();
+    } catch {}
+    watchdogAbort.abort();
+  };
+
+  const firstTokenTimeout = watchdog?.firstTokenTimeoutMs;
+  if (typeof firstTokenTimeout === 'number' && firstTokenTimeout > 0) {
+    firstTokenTimer = setTimeout(() => {
+      triggerWatchdog(`First token timeout: no response within ${firstTokenTimeout}ms`);
+    }, firstTokenTimeout);
+  }
+
+  const stallTimeout = watchdog?.stallTimeoutMs;
+  const armStallTimer = () => {
+    if (stallTimer) clearTimeout(stallTimer);
+    if (typeof stallTimeout === 'number' && stallTimeout > 0 && !watchdogTriggered) {
+      stallTimer = setTimeout(() => {
+        triggerWatchdog(`Stall timeout: no stream event for ${stallTimeout}ms`);
+      }, stallTimeout);
+    }
+  };
+
+  armStallTimer();
+
+  try {
+    const stream = await client.sessions.createTurnStream(sessionId, { input }, { abortSignal: effectiveSignal, maxRetries: 0, timeoutInSeconds: 600 });
+
+    for await (const { data: event } of stream.withMetadata()) {
+      if (watchdogTriggered) break;
+      armStallTimer();
+      if (firstTokenTimer) {
+        if (event.type === 'model.message' || isEventDelta(event) || ('content' in event && (event as any).content) || ('toolCalls' in event && Array.isArray((event as any).toolCalls) && (event as any).toolCalls.length > 0)) {
+          clearTimeout(firstTokenTimer);
+          firstTokenTimer = undefined;
+        }
+      }
+      if (!event || typeof event !== 'object' || typeof event.type !== 'string' || typeof event.id !== 'string') throw new Error('TrueForge sent an invalid event.');
     if (isEventDelta(event)) {
       let base = events.get(event.id);
       if (!base) {
@@ -115,6 +177,17 @@ export async function runTurn(
 
         break;
     }
+  }
+  } catch (err) {
+    if (watchdogTriggered && watchdogReason) {
+      throw new Error(watchdogReason);
+    }
+    throw err;
+  } finally {
+    clearTimers();
+  }
+  if (watchdogTriggered && watchdogReason) {
+    throw new Error(watchdogReason);
   }
   if (!terminal) { result.status = 'unknown'; result.approvals = []; result.toolResponses = []; }
   if (result.status === 'paused' && result.approvals.length === 0 && result.toolResponses.length === 0) result.status = 'unknown';

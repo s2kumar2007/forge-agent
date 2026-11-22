@@ -1,7 +1,7 @@
 import type { TrueForge, TrueForgeApi } from '@truefoundry/trueforge-sdk';
 import { describeToolCall, runTurn, toolName } from '../forge/turnRunner';
 import type { AgentUi, ApprovalHandler } from './types';
-import { CancelledError, ForgeFailure, IterationLimitError, isIterationLimitError, runWithFallback } from './resilience';
+import { CancelledError, ForgeFailure, IterationLimitError, isIterationLimitError, runWithFallback, isOverloadedError, isStallError, type FallbackTarget } from './resilience';
 import { RunMetricsCollector, type RunMetrics } from '../metrics';
 import { computeHunks } from '../review/hunks';
 import { computeChangeConfidence } from '../review/confidence';
@@ -30,13 +30,66 @@ function isPayloadTooLarge(err: unknown): boolean {
 
 export function isCircuitBreakerError(err: unknown): boolean {
   if (isIterationLimitError(err)) return false;
-  return isAuthenticationFailure(err) || isNetworkFailure(err) || isServerFailure(err) || isPayloadTooLarge(err);
+  return (
+    isAuthenticationFailure(err) ||
+    isNetworkFailure(err) ||
+    isServerFailure(err) ||
+    isPayloadTooLarge(err) ||
+    isOverloadedError(err) ||
+    isStallError(err)
+  );
+}
+
+export class ModelHealthTracker {
+  private unhealthyUntil = new Map<string, number>();
+
+  constructor(
+    private readonly durationMs = 5 * 60 * 1000,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  isHealthy(model: string): boolean {
+    const until = this.unhealthyUntil.get(model);
+    if (!until) return true;
+    if (this.now() >= until) {
+      this.unhealthyUntil.delete(model);
+      return true;
+    }
+    return false;
+  }
+
+  markUnhealthy(model: string): void {
+    this.unhealthyUntil.set(model, this.now() + this.durationMs);
+  }
+
+  markHealthy(model: string): void {
+    this.unhealthyUntil.delete(model);
+  }
+
+  reset(): void {
+    this.unhealthyUntil.clear();
+  }
+
+  getUnhealthyModels(): string[] {
+    const list: string[] = [];
+    for (const [m, until] of this.unhealthyUntil.entries()) {
+      if (this.now() < until) list.push(m);
+      else this.unhealthyUntil.delete(m);
+    }
+    return list;
+  }
 }
 
 export interface ControllerDeps {
   getClient: () => TrueForge;
   approvals: ApprovalHandler;
-  agents: () => { primary: string; fallback?: string; fallbackModel?: string };
+  agents: () => {
+    primary: string;
+    primaryModel?: string;
+    fallback?: string;
+    fallbackModel?: string;
+    fallbackModels?: string[];
+  };
   retries?: number;
   backoffMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -47,6 +100,7 @@ export interface ControllerDeps {
   sessionId?: string | (() => string | undefined);
   onSessionCreated?: (sessionId: string) => void;
   logError?: (err: unknown) => void;
+  logAttempt?: (line: string) => void;
   now?: () => number;
   circuitBreakerDurationMs?: number;
   onMetrics?: (metrics: RunMetrics) => void;
@@ -55,6 +109,9 @@ export interface ControllerDeps {
   verifyAndRepair?: () => Promise<{ ok: boolean; errors?: string }>;
   maxRepairRounds?: number;
   fallbackContextBudget?: number;
+  firstTokenTimeoutMs?: number;
+  stallTimeoutMs?: number;
+  failoverBudgetMs?: number;
 }
 
 export function sanitizeReason(err: unknown): string {
@@ -96,12 +153,15 @@ export class AgentController {
   private primaryUnhealthyUntil = 0;
   private primaryUnavailableNoticeShown = false;
   private handoffTracker = new HandoffTracker();
+  private modelHealth: ModelHealthTracker;
+  private attemptCount = 0;
   private readonly circuitBreakerDurationMs: number;
   private readonly now: () => number;
 
   constructor(private d: ControllerDeps) {
     this.circuitBreakerDurationMs = d.circuitBreakerDurationMs ?? 5 * 60 * 1000;
     this.now = d.now ?? Date.now;
+    this.modelHealth = new ModelHealthTracker(this.circuitBreakerDurationMs, this.now);
   }
 
   get busy(): boolean { return this.running; }
@@ -110,13 +170,20 @@ export class AgentController {
     return this.handoffTracker;
   }
 
+  getModelHealthTracker(): ModelHealthTracker {
+    return this.modelHealth;
+  }
+
   isPrimaryHealthy(): boolean {
-    return this.now() >= this.primaryUnhealthyUntil;
+    const cfg = this.d.agents();
+    const primaryModel = cfg.primaryModel ?? cfg.primary;
+    return this.now() >= this.primaryUnhealthyUntil && this.modelHealth.isHealthy(primaryModel);
   }
 
   resetCircuitBreaker(): void {
     this.primaryUnhealthyUntil = 0;
     this.primaryUnavailableNoticeShown = false;
+    this.modelHealth.reset();
   }
 
   async run(
@@ -126,6 +193,7 @@ export class AgentController {
     rebuildRequest?: (agent: string) => Promise<string>,
   ): Promise<void> {
     if (this.running) { ui.finished({ status: 'error', message: 'Forge is already working on a request.' }); return; }
+    this.attemptCount = 0;
     this.running = true;
     this.cancelled = false;
     this.abort = new AbortController();
@@ -140,15 +208,28 @@ export class AgentController {
     this.d.onRunStart?.();
     const cfg = this.d.agents();
     const primaryAgent = agentOverride ?? cfg.primary;
-    const fallbackAgent = cfg.fallback;
+    const primaryModel = cfg.primaryModel ?? primaryAgent;
+    const primaryTarget: FallbackTarget = { agent: primaryAgent, model: primaryModel };
+
+    const fallbackTargets: FallbackTarget[] = [];
+    if (cfg.fallbackModels && cfg.fallbackModels.length > 0) {
+      for (const m of cfg.fallbackModels) {
+        fallbackTargets.push({ agent: cfg.fallback ?? 'forge-agent-fallback', model: m });
+      }
+    } else if (cfg.fallback) {
+      fallbackTargets.push({ agent: cfg.fallback, model: cfg.fallbackModel ?? cfg.fallback });
+    }
+
     const isPrimaryHealthy = this.isPrimaryHealthy();
 
-    let chosenPrimary = primaryAgent;
-    let chosenFallback = fallbackAgent;
+    let chosenPrimary: FallbackTarget = primaryTarget;
+    let chosenFallbacks: FallbackTarget[] = fallbackTargets;
 
-    if (fallbackAgent && !isPrimaryHealthy) {
-      chosenPrimary = fallbackAgent;
-      chosenFallback = undefined;
+    if (fallbackTargets.length > 0 && !isPrimaryHealthy) {
+      const healthyFallbacks = fallbackTargets.filter((t) => this.modelHealth.isHealthy(t.model ?? t.agent));
+      const firstHealthy = healthyFallbacks[0] ?? fallbackTargets[0]!;
+      chosenPrimary = firstHealthy;
+      chosenFallbacks = fallbackTargets.filter((t) => (t.model ?? t.agent) !== (firstHealthy.model ?? firstHealthy.agent));
       if (!this.primaryUnavailableNoticeShown) {
         ui.notice('Primary unavailable, using fallback');
         this.primaryUnavailableNoticeShown = true;
@@ -162,32 +243,55 @@ export class AgentController {
     try {
       const outcome = await runWithFallback<'done' | 'cancelled'>({
         primary: chosenPrimary,
-        fallback: chosenFallback,
+        fallbacks: chosenFallbacks,
         retries: this.d.retries ?? 2,
         backoffMs: this.d.backoffMs ?? 1000,
+        failoverBudgetMs: this.d.failoverBudgetMs ?? 45_000,
+        now: this.now,
         sleep: this.d.sleep ?? ((ms) => sleepForRetry(ms, this.abort.signal)),
         isCancelled: () => this.cancelled,
         canRetry: () => this.approvedOperations === 0,
-        shouldFallbackImmediately: (err) => isAuthenticationFailure(err) || isNetworkFailure(err) || isServerFailure(err) || isPayloadTooLarge(err),
-        attempt: (agent) => this.attempt(agent, request, ui, rebuildRequest, () => ++clientToolResponses, metricsCollector),
-        onRetry: (agent, n, err) => {
+        shouldFallbackImmediately: (err) => !isOverloadedError(err) && (isAuthenticationFailure(err) || isNetworkFailure(err) || isServerFailure(err) || isPayloadTooLarge(err) || isStallError(err)),
+        isModelHealthy: (m) => this.modelHealth.isHealthy(m),
+        onModelOverloadedOrStalled: (modelKey, err) => {
+          this.modelHealth.markUnhealthy(modelKey);
+          if (modelKey === primaryModel || modelKey === primaryAgent) {
+            this.primaryUnhealthyUntil = this.now() + this.circuitBreakerDurationMs;
+          }
+        },
+        attempt: (agent, target) => this.attempt(
+          agent,
+          target?.model ?? agent,
+          request,
+          ui,
+          rebuildRequest,
+          () => ++clientToolResponses,
+          metricsCollector,
+          primaryAgent,
+        ),
+        onRetry: (agent, n, err, target) => {
           this.d.logError?.(err);
           const reason = sanitizeReason(err);
-          ui.notice(`Request to "${agent}" failed (${reason}), retrying (${n})...`);
+          const modelName = target?.model ?? agent;
+          ui.notice(`Attempt ${this.attemptCount}: Request to "${modelName}" failed (${reason}), retrying (${n})...`);
         },
-        onFallback: (err) => {
+        onFallback: (err, fromTarget, toTarget) => {
           primaryFailed = true;
+          const failedModel = fromTarget?.model ?? fromTarget?.agent ?? primaryModel;
+          const nextModel = toTarget?.model ?? toTarget?.agent ?? (cfg.fallbackModel ?? cfg.fallback ?? 'fallback');
           if (isCircuitBreakerError(err)) {
             this.primaryUnhealthyUntil = this.now() + this.circuitBreakerDurationMs;
+            this.modelHealth.markUnhealthy(failedModel);
             this.primaryUnavailableNoticeShown = false;
           }
-          const model = sanitizeReason(new Error(cfg.fallbackModel ?? cfg.fallback ?? 'fallback'));
-          ui.notice(`Primary model failed, using fallback: ${model}`);
+          const reason = sanitizeReason(err);
+          ui.notice(`Attempt ${this.attemptCount} to "${failedModel}" failed (${reason})`);
+          ui.notice(`Primary model failed, using fallback: ${nextModel}`);
           const filesCount = this.handoffTracker.getUniqueFilesCount();
           ui.notice(`Primary unavailable, continuing on fallback (reusing ${filesCount} files already read)`);
         },
       });
-      if (chosenPrimary === primaryAgent && !primaryFailed && outcome === 'done') {
+      if (chosenPrimary.agent === primaryAgent && !primaryFailed && outcome === 'done') {
         this.primaryUnhealthyUntil = 0;
         this.primaryUnavailableNoticeShown = false;
       }
@@ -200,8 +304,9 @@ export class AgentController {
         });
         return;
       }
-      if (chosenPrimary === primaryAgent && isCircuitBreakerError(e)) {
+      if (chosenPrimary.agent === primaryAgent && isCircuitBreakerError(e)) {
         this.primaryUnhealthyUntil = this.now() + this.circuitBreakerDurationMs;
+        this.modelHealth.markUnhealthy(primaryModel);
         this.primaryUnavailableNoticeShown = false;
       }
       if (e instanceof CancelledError) ui.finished(this.cancelInfo());
@@ -220,7 +325,7 @@ export class AgentController {
       this.sessionId = undefined;
       const metrics = metricsCollector.finish();
       if (!metrics.agentAnswered) {
-        metrics.agentAnswered = primaryFailed ? (chosenFallback ?? chosenPrimary) : chosenPrimary;
+        metrics.agentAnswered = primaryFailed ? (chosenFallbacks[0]?.agent ?? chosenPrimary.agent) : chosenPrimary.agent;
       }
       ui.metrics?.(metrics);
       this.d.onMetrics?.(metrics);
@@ -245,18 +350,21 @@ export class AgentController {
 
   private async attempt(
     agent: string,
+    model: string,
     request: string,
     ui: AgentUi,
     rebuildRequest?: (agent: string) => Promise<string>,
     countClientToolResponse?: () => number,
     metricsCollector?: RunMetricsCollector,
+    primaryAgent?: string,
   ): Promise<'done' | 'cancelled'> {
     this.d.approvals.cancelAll();
     this.sessionId = undefined;
     await this.d.prepare?.();
     if (this.cancelled) return 'cancelled';
 
-    if (this.d.faultInjection && this.d.faultInjection !== 'none' && agent === this.d.agents().primary) {
+    const pAgent = primaryAgent ?? this.d.agents().primary;
+    if (this.d.faultInjection && this.d.faultInjection !== 'none' && agent === pAgent) {
       const mode = String(this.d.faultInjection);
       if (mode === 'auth' || mode === 'true') {
         throw new Error('HTTP 401 Unauthorized (fault injection)');
@@ -281,11 +389,17 @@ export class AgentController {
     }
     this.sessionId = sid;
     ui.session?.(sid);
+
+    this.attemptCount++;
+    const attemptLog = `[forge] Attempt ${this.attemptCount}: session=${sid} agent=${agent} model=${model}`;
+    this.d.logAttempt?.(attemptLog);
+    this.d.logMetrics?.(attemptLog);
+
     if (this.cancelled) { await client.sessions.cancel(sid, {}).catch(() => {}); return 'cancelled'; }
 
     let messageContent = rebuildRequest ? await rebuildRequest(agent) : request;
-    const isFallback = agent === this.d.agents().fallback;
-    if (isFallback && this.handoffTracker.hasData()) {
+    const isFailover = this.attemptCount > 1 || agent === this.d.agents().fallback || agent !== pAgent;
+    if (isFailover && this.handoffTracker.hasData()) {
       const fallbackBudget = this.d.fallbackContextBudget ?? 1200;
       const brief = this.handoffTracker.buildHandoffBrief({ maxTokens: fallbackBudget });
       messageContent = `${brief}\n\n${messageContent}`;
@@ -340,7 +454,15 @@ export class AgentController {
           }
           ui.toolCall(n);
         },
-      }, this.abort.signal);
+      }, this.abort.signal, {
+        firstTokenTimeoutMs: this.d.firstTokenTimeoutMs ?? 25000,
+        stallTimeoutMs: this.d.stallTimeoutMs ?? 20000,
+        onStall: async () => {
+          try { await client.sessions.cancel(sid!, {}); } catch {}
+          this.d.approvals.cancelAll();
+          this.d.onCancel?.();
+        },
+      });
       metricsCollector?.recordToolEnd();
       if (this.cancelled || res.status === 'cancelled') return 'cancelled';
       if (res.status === 'error') {

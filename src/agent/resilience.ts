@@ -16,19 +16,29 @@ export function isIterationLimitError(err: unknown): boolean {
   return /iteration limit/i.test(message);
 }
 
+export interface FallbackTarget {
+  agent: string;
+  model?: string;
+}
+
 export interface FallbackOptions<T> {
-  primary: string;
-  fallback?: string;
+  primary: string | FallbackTarget;
+  fallback?: string | FallbackTarget;
+  fallbacks?: (string | FallbackTarget)[];
   /** Retries per agent after the first try (spec: 2). Backoff is backoffMs * 2^n. */
   retries: number;
   backoffMs: number;
   sleep: (ms: number) => Promise<void>;
-  attempt: (agent: string) => Promise<T>;
+  attempt: (agent: string, target?: FallbackTarget) => Promise<T>;
   isCancelled: () => boolean;
   canRetry?: () => boolean;
   shouldFallbackImmediately?: (err: unknown) => boolean;
-  onRetry?: (agent: string, retryNo: number, err: unknown) => void;
-  onFallback?: (err: unknown) => void;
+  onRetry?: (agent: string, retryNo: number, err: unknown, target?: FallbackTarget) => void;
+  onFallback?: (err: unknown, fromTarget?: FallbackTarget, toTarget?: FallbackTarget) => void;
+  failoverBudgetMs?: number;
+  now?: () => number;
+  isModelHealthy?: (model: string) => boolean;
+  onModelOverloadedOrStalled?: (model: string, err: unknown) => void;
 }
 
 /** Short, stack-free reason for the one error message the user sees. */
@@ -77,13 +87,64 @@ export function isPermanentError(err: unknown): boolean {
   return false;
 }
 
+/** Detects overloaded model errors: 503/UNAVAILABLE "high demand" and ECONNRESET/terminated. */
+export function isOverloadedError(err: unknown): boolean {
+  if (!err) return false;
+  const message = err instanceof Error ? err.message : String(err);
+  if (/high[-_ ]?demand|overloaded/i.test(message)) return true;
+  if (/\b(?:ECONNRESET|terminated|socket hang up|connection reset)\b/i.test(message)) return true;
+  return false;
+}
+
+/** Detects watchdog timeout / stall errors. */
+export function isStallError(err: unknown): boolean {
+  if (!err) return false;
+  const message = err instanceof Error ? err.message : String(err);
+  return /stall timeout|first token timeout|no stream event|no response within/i.test(message);
+}
+
 /**
  * try primary (1 + `retries` times with exponential backoff) -> switch to the fallback agent
  * (fresh session, same request, handled by `attempt`) -> else throw ONE clear ForgeFailure.
  * A cancelled run is never retried.
  */
 export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
-  const agents = [o.primary, ...(o.fallback && o.fallback !== o.primary ? [o.fallback] : [])];
+  const normalizeTarget = (t: string | FallbackTarget): FallbackTarget => {
+    return typeof t === 'string' ? { agent: t, model: t } : { agent: t.agent, model: t.model ?? t.agent };
+  };
+
+  const rawTargets: FallbackTarget[] = [];
+  rawTargets.push(normalizeTarget(o.primary));
+  if (o.fallbacks && o.fallbacks.length > 0) {
+    for (const fb of o.fallbacks) {
+      rawTargets.push(normalizeTarget(fb));
+    }
+  } else if (o.fallback && o.fallback !== o.primary) {
+    rawTargets.push(normalizeTarget(o.fallback));
+  }
+
+  const now = o.now ?? Date.now;
+  const startTime = now();
+  const failoverBudgetMs = o.failoverBudgetMs ?? 45_000;
+  const checkBudget = () => {
+    if (now() - startTime >= failoverBudgetMs) {
+      throw new ForgeFailure(
+        `Failover budget exceeded (${Math.round(failoverBudgetMs / 1000)}s). No changes were made to your workspace.`
+      );
+    }
+  };
+
+  // Skip unhealthy models for later requests if healthy ones exist
+  let targets = rawTargets;
+  if (o.isModelHealthy) {
+    const healthyTargets = rawTargets.filter((t) => o.isModelHealthy!(t.model ?? t.agent));
+    if (healthyTargets.length > 0) {
+      targets = healthyTargets;
+    }
+  }
+
+  const modelSessionsInThisRun = new Map<string, number>();
+
   let lastErr: unknown;
   let primaryErr: unknown;
   let fallbackErr: unknown;
@@ -91,16 +152,34 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
   let fallbackWaitMs = 0;
   const MAX_FALLBACK_WAIT_MS = 30_000;
 
-  for (let a = 0; a < agents.length; a++) {
-    const agent = agents[a]!;
+  for (let a = 0; a < targets.length; a++) {
+    const target = targets[a]!;
+    const modelKey = target.model ?? target.agent;
     const isFallback = a > 0;
+    const wasInitiallyHealthy = !o.isModelHealthy || o.isModelHealthy(modelKey);
+
+    checkBudget();
+
+    // Never start more than one session on the same unhealthy model per request
+    if (!wasInitiallyHealthy && (modelSessionsInThisRun.get(modelKey) ?? 0) >= 1) {
+      continue;
+    }
+
     // Avoid double retry stacking: if primary already retried, fallback gets 0 retries
     const maxRetries = isFallback && primaryRetried ? 0 : o.retries;
 
     for (let i = 0; i <= maxRetries; i++) {
+      checkBudget();
       if (o.isCancelled()) throw new CancelledError();
+
+      if (!wasInitiallyHealthy && (modelSessionsInThisRun.get(modelKey) ?? 0) >= 1) {
+        break;
+      }
+
+      modelSessionsInThisRun.set(modelKey, (modelSessionsInThisRun.get(modelKey) ?? 0) + 1);
+
       try {
-        return await o.attempt(agent);
+        return await o.attempt(target.agent, target);
       } catch (e) {
         lastErr = e;
         if (a === 0) primaryErr = e;
@@ -119,7 +198,34 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
           break;
         }
 
+        // Stall error: mark model unhealthy, 0 retries, switch immediately
+        if (isStallError(e)) {
+          o.onModelOverloadedOrStalled?.(modelKey, e);
+          break;
+        }
+
+        // Overloaded error (503 / UNAVAILABLE / high demand / ECONNRESET / terminated):
+        // at most ONE quick retry (<=2s), then switch to next model in ordered fallback list
+        if (isOverloadedError(e)) {
+          if (i >= 1 || !wasInitiallyHealthy) {
+            o.onModelOverloadedOrStalled?.(modelKey, e);
+            break;
+          }
+          checkBudget();
+          const delay = Math.min(2000, o.backoffMs * 2 ** i);
+          const remainingBudget = failoverBudgetMs - (now() - startTime);
+          if (remainingBudget <= 0) {
+            checkBudget();
+          }
+          const actualDelay = Math.min(delay, remainingBudget);
+          o.onRetry?.(target.agent, i + 1, e, target);
+          await o.sleep(actualDelay);
+          o.onModelOverloadedOrStalled?.(modelKey, e);
+          continue;
+        }
+
         if (i < maxRetries) {
+          checkBudget();
           let delay = retryDelay(e, o.backoffMs * 2 ** i, isFallback ? 30_000 : 12_000);
           if (isFallback) {
             const remaining = MAX_FALLBACK_WAIT_MS - fallbackWaitMs;
@@ -129,14 +235,22 @@ export async function runWithFallback<T>(o: FallbackOptions<T>): Promise<T> {
             delay = Math.min(delay, remaining);
             fallbackWaitMs += delay;
           }
-          o.onRetry?.(agent, i + 1, e);
+          const remainingBudget = failoverBudgetMs - (now() - startTime);
+          if (remainingBudget <= 0) {
+            checkBudget();
+          }
+          delay = Math.min(delay, remainingBudget);
+          o.onRetry?.(target.agent, i + 1, e, target);
           await o.sleep(delay);
         }
       }
     }
-    if (a === 0 && agents.length > 1) o.onFallback?.(lastErr);
+    if (a < targets.length - 1) {
+      o.onFallback?.(lastErr, target, targets[a + 1]);
+    }
   }
-  if (agents.length > 1) {
+  checkBudget();
+  if (targets.length > 1) {
     if (isQuotaError(primaryErr) || isQuotaError(fallbackErr)) {
       throw new ForgeFailure(
         `Primary model failed (${briefReason(primaryErr ?? lastErr)}); fallback model failed (${briefReason(fallbackErr ?? lastErr)}). No files were changed.`

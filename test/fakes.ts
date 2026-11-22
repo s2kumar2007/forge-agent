@@ -21,15 +21,33 @@ export class FakeTrueForge {
         return { data: { id } };
       },
       cancel: async (id: string) => { this.cancels.push(id); this.cancelHooks.forEach((h) => h()); return {}; },
-      createTurnStream: async (id: string, { input }: { input: any[] }) => {
+      createTurnStream: async (id: string, { input }: { input: any[] }, options?: { abortSignal?: AbortSignal }) => {
         const agent = this.sessions.get(id)!;
         this.inputs.push(input);
         const script = this.scripts[agent]?.shift();
         if (!script) throw new Error(`no script for ${agent}`);
+        const signal = options?.abortSignal;
+        if (signal?.aborted) throw new Error('aborted');
         const out = await script(input, agent);
         return { withMetadata: async function* () {
-          if (Symbol.asyncIterator in (out as object)) { for await (const e of out as AsyncGenerator<Ev>) yield { data: e, id: String(e.id) }; }
-          else for (const e of out as Ev[]) yield { data: e, id: String(e.id) };
+          if (Symbol.asyncIterator in (out as object)) {
+            const it = (out as AsyncGenerator<Ev>)[Symbol.asyncIterator]();
+            while (true) {
+              if (signal?.aborted) throw new Error('aborted');
+              const abortPromise = new Promise<never>((_, reject) => {
+                signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+              });
+              const res = await Promise.race([it.next(), abortPromise]);
+              if (res.done) break;
+              yield { data: res.value, id: String(res.value.id) };
+            }
+          }
+          else {
+            for (const e of out as Ev[]) {
+              if (signal?.aborted) throw new Error('aborted');
+              yield { data: e, id: String(e.id) };
+            }
+          }
         } };
       },
     },

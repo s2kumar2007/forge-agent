@@ -11,7 +11,7 @@ Forge Agent was benchmarked under real and simulated environments using:
 - **Fallback Agent**: `google-gemini` (`google-gemini/gemini-3-8-flash` catalog entry in TrueForge).
 - **Editor Loopback Server**: Streamable HTTP MCP server registering native workspace tools (`read_file`, `list_dir`, `search_workspace`, `propose_write`, `run_command`, `propose_changes`, `search_symbols`, `find_references`, `get_diagnostics`, `run_tests`).
 
-All three target tasks passed end-to-end with high fidelity, verified independently via `scripts/verify-flask-demo.py` and the 32 test suites (278 automated unit & contract tests).
+All three target tasks passed end-to-end with high fidelity, verified independently via `scripts/verify-flask-demo.py` and the 33 test suites (287 automated unit & contract tests).
 
 ---
 
@@ -81,9 +81,12 @@ All three target tasks passed end-to-end with high fidelity, verified independen
   - Fallback model on Google Gemini proceeds directly to proposal generation in a single turn.
   - Circuit breaker remains tripped for 5 minutes; subsequent requests route directly to fallback agent.
   - Workspace left 100% clean, no dirty git working tree.
-- **Task C Before vs. After Handoff Comparison**:
-  - *Before Handoff (Restart)*: The fallback session started from scratch with an empty session memory, repeated exploratory file reads and symbol searches, requiring **2 model turns** and taking **~18.5s** total fallback execution time.
-  - *After Handoff (Continue)*: The fallback session receives the handoff brief with file outlines and continuation instructions, generating the write proposal on turn 1 without re-reading files, completing in **1 model turn** and **~3.2s** total fallback execution time (**50% turn reduction**, **5.8x faster**).
+- **Task C Before vs. After Handoff & Watchdog Comparison**:
+  - *Before Handoff (Restart)*: The fallback session started from scratch with an empty session memory, repeated exploratory file reads and symbol searches, requiring **2 model turns** and taking **~18.5s** total fallback execution time. Unreachable / stalled models previously hung for up to **~9.5 minutes** until ECONNRESET.
+  - *After Handoff & Watchdog (Continue)*: The fallback session receives the handoff brief with file outlines and continuation instructions, generating the write proposal on turn 1 without re-reading files, completing in **1 model turn** and **~3.2s** total fallback execution time (**50% turn reduction**, **5.8x faster**).
+  - *Invalid Key (401/403)*: Fails fast in **~3.2s** with 0 retries, trips breaker for 5m, and transfers handoff brief to fallback session.
+  - *Unreachable Endpoint / Stall*: Watchdog bounds initial response to `firstTokenTimeoutMs` (25s) and inter-event gap to `stallTimeoutMs` (20s). Immediate network rejects fail fast in **~3.5s**, aborting stalled sessions, clearing review state, and killing child processes, strictly bounded by `failoverBudgetMs` (45s).
+  - *Overloaded Model Classification*: 503 "high demand" and connection resets receive at most 1 quick retry (<=2s) before advancing down the ordered fallback list (`forge.fallbackModels`) and marking the model unhealthy for 5 minutes.
 
 ---
 
